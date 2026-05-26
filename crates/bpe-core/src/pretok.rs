@@ -196,6 +196,44 @@ mod tests {
     }
 
     #[test]
+    pub fn test_sequence_builder_merge() {
+        let mut s1 = SequenceBuilder::new();
+
+        s1.append(b"Hello");
+        s1.append(b"world");
+        s1.append(b"Hello");
+
+        let mut s2 = SequenceBuilder::new();
+
+        s2.append(b"Hi");
+        s2.append(b"world");
+
+        let merged = SequenceBuilder::merge(s1, s2);
+        assert_eq!(merged.counts().len(), 3);
+        assert_eq!(
+            *merged
+                .counts()
+                .get(b"Hello".as_slice())
+                .expect("expected Hello in map"),
+            2
+        );
+        assert_eq!(
+            *merged
+                .counts()
+                .get(b"world".as_slice())
+                .expect("expected world in map"),
+            2
+        );
+        assert_eq!(
+            *merged
+                .counts()
+                .get(b"Hi".as_slice())
+                .expect("expected hi in map"),
+            1
+        );
+    }
+
+    #[test]
     pub fn test_regex_compiles() {
         gpt_regex();
     }
