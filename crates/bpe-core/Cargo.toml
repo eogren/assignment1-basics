@@ -9,4 +9,9 @@ edition = "2021"
 fancy-regex = "0.18.0"
 itertools = "0.14.0"
 memchr = "2.8.0"
+memmap2 = "0.9.10"
 rustc-hash = "2.1.2"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -18,7 +18,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bpe-core = { path = "../bpe-core" }
-memmap2 = "0.9.10"
 pyo3 = { version = "0.28.3", features = ["extension-module"] }
 
 [dev-dependencies]

@@ -1,8 +1,40 @@
-use std::{cmp::min, path::PathBuf};
+use std::{
+    cmp::min,
+    fs::File,
+    io::{Error, ErrorKind},
+    path::PathBuf,
+};
 
 use memchr::memmem;
+use memmap2::Mmap;
+use thiserror::Error;
 
 mod pretok;
+
+#[derive(Error, Debug)]
+pub enum BpeError {
+    #[error("at least one special token is required")]
+    SpecialTokensRequired,
+
+    #[error("I/O error")]
+    IoError(#[from] std::io::Error),
+}
+
+pub fn tokenize(
+    path: PathBuf,
+    num_tokens: u64,
+    special_tokens: Vec<String>,
+) -> Result<(), BpeError> {
+    let m = open_file(path)?;
+
+    // For now just use the first special token
+    let first_token = special_tokens
+        .first()
+        .ok_or(BpeError::SpecialTokensRequired)?;
+
+    Ok(())
+}
+
 /// Chunk the given file with approx `estimated_chunk_size` chunks.
 fn chunk_with_readahead<'a>(
     file: &'a [u8],
@@ -44,11 +76,22 @@ fn chunk<'a>(file: &'a [u8], split_token: &[u8], estimated_chunk_size: usize) ->
     chunk_with_readahead(file, split_token, estimated_chunk_size, 4096)
 }
 
-pub fn tokenize(path: PathBuf, num_tokens: u64, special_tokens: Vec<String>) {
+fn open_file(path: PathBuf) -> Result<Mmap, std::io::Error> {
+    let f = File::open(path)?;
+    let md = f.metadata()?;
 
+    if !md.is_file() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "must pass a valid file",
+        ));
+    }
+
+    let mmap = unsafe { memmap2::Mmap::map(&f) }?;
+
+    Ok(mmap)
 }
 
-fn pretokenize()
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,5 +127,18 @@ mod tests {
             vec![b"Hello ", b"World "],
             "small chunk size should split appropriately"
         );
+    }
+
+    #[test]
+    fn test_tokenize_err_on_invalid_file() {
+        let e = tokenize("/tmp".into(), 500, vec!["<|endoftext|>".to_string()]);
+        assert!(matches!(e, Err(BpeError::IoError(_))));
+    }
+
+    #[test]
+    fn test_tokenize_no_tokens() {
+        let file = tempfile::NamedTempFile::new().expect("failed to create file");
+        let e = tokenize(file.path().to_path_buf(), 500, vec![]);
+        assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
 }
