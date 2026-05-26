@@ -55,6 +55,28 @@ impl SequenceBuilder {
         }
     }
 
+    /// Merge two sequence builders together, consuming them both and returning a merged copy.
+    /// The merged copy shoul dhave all the sequences in both; with counts added together
+    /// where there was overlap.
+    pub fn merge(s1: SequenceBuilder, s2: SequenceBuilder) -> SequenceBuilder {
+        let (smallest, mut biggest) = if s1.counts().len() < s2.counts().iter().len() {
+            (s1, s2)
+        } else {
+            (s2, s1)
+        };
+
+        let smallest_items = smallest.into_counts();
+
+        for item in smallest_items {
+            biggest
+                .sequences
+                .entry(item.0)
+                .and_modify(|e| *e += item.1)
+                .or_insert(item.1);
+        }
+        biggest
+    }
+
     pub fn append(&mut self, bytes: &[u8]) {
         match self.sequences.get_mut(bytes) {
             None => {
@@ -68,6 +90,10 @@ impl SequenceBuilder {
 
     pub fn counts(&self) -> &FxHashMap<Vec<u8>, usize> {
         &self.sequences
+    }
+
+    fn into_counts(self) -> FxHashMap<Vec<u8>, usize> {
+        self.sequences
     }
 }
 /*
