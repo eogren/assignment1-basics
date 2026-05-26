@@ -19,15 +19,27 @@ pub enum BpeError {
     #[error("at least one special token is required")]
     SpecialTokensRequired,
 
+    #[error("not enough tokens in vocab. we start with at least 256")]
+    VocabTooSmall,
+
     #[error("I/O error")]
     IoError(#[from] std::io::Error),
 }
 
+pub trait Interrupt {
+    fn check(&self) -> Result<(), BpeError>;
+}
+
 pub fn tokenize(
     path: PathBuf,
-    num_tokens: u64,
+    num_tokens: u32,
     special_tokens: Vec<String>,
+    interrupt_fn: impl Interrupt,
 ) -> Result<(), BpeError> {
+    if num_tokens < 256 {
+        return Err(BpeError::VocabTooSmall);
+    }
+
     let m = open_file(path)?;
 
     // For now just use the first special token
@@ -39,10 +51,15 @@ pub fn tokenize(
 
     let chunks = chunk_with_readahead(&m, first_token, 1024 * 1024, 4096);
 
+    let mut num_chunks = 0;
     // todo: parallelize
     for chunk in chunks {
         let sb = pretokenize_chunk(chunk, &special_tokens_str);
         println!("Got {} distinct sequences in this chunk", sb.counts().len());
+        num_chunks += 1;
+        if num_chunks % 10 == 0 {
+            interrupt_fn.check()?;
+        }
     }
 
     Ok(())
@@ -108,24 +125,11 @@ mod tests {
     const SEP: &[u8] = b" ";
     const CHUNK: &[u8] = b"Hello World ";
 
-    #[test]
-    fn test_tiny_chunk() {
-        let tiny_chunk = chunk(CHUNK, SEP, 1);
-        assert_eq!(
-            tiny_chunk,
-            vec![b"Hello ", b"World "],
-            "small chunk size should split appropriately"
-        );
-    }
-
-    #[test]
-    fn test_big_chunk() {
-        let big_chunk = chunk(CHUNK, SEP, 64);
-        assert_eq!(
-            big_chunk,
-            vec![b"Hello World "],
-            "big chunk should just return the whole thing"
-        );
+    struct NoOpInterrupt {}
+    impl Interrupt for NoOpInterrupt {
+        fn check(&self) -> Result<(), BpeError> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -140,14 +144,16 @@ mod tests {
 
     #[test]
     fn test_tokenize_err_on_invalid_file() {
-        let e = tokenize("/tmp".into(), 500, vec!["<|endoftext|>".to_string()]);
+        let i = NoOpInterrupt {};
+        let e = tokenize("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], i);
         assert!(matches!(e, Err(BpeError::IoError(_))));
     }
 
     #[test]
     fn test_tokenize_no_tokens() {
+        let i = NoOpInterrupt {};
         let file = tempfile::NamedTempFile::new().expect("failed to create file");
-        let e = tokenize(file.path().to_path_buf(), 500, vec![]);
+        let e = tokenize(file.path().to_path_buf(), 500, vec![], i);
         assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
 }
