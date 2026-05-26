@@ -21,6 +21,7 @@ use thiserror::Error;
 use crate::pretok::{pretokenize_chunk, SequenceBuilder};
 
 mod pretok;
+mod sequence;
 
 #[derive(Error, Debug)]
 pub enum BpeError {
@@ -90,7 +91,6 @@ pub fn tokenize(
                 Some(SequenceBuilder::merge(s1, s2))
             });
 
-            
         // Stop watchdog
         stop_signal.store(true, Ordering::Relaxed);
         merged_chunks
