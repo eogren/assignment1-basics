@@ -1,18 +1,16 @@
+/// Keeps track of the sequences discovered during pretokenization in a memory friendly way
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
-use itertools;
 use rustc_hash::FxHashMap;
-
-/// Keeps track of the sequences discovered during pretokenization in a memory friendly way
 
 static GPT2_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn gpt_regex() -> &'static Regex {
-    return GPT2_REGEX.get_or_init(|| {
+    GPT2_REGEX.get_or_init(|| {
         Regex::new(r#"(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#)
             .expect("expected gpt2 regex to compile")
-    });
+    })
 }
 
 fn split_regex(special_tokens: &[&str]) -> Regex {
@@ -22,7 +20,7 @@ fn split_regex(special_tokens: &[&str]) -> Regex {
             .map(|token| fancy_regex::escape(token)),
         "|",
     );
-    return Regex::new(&re).expect("expected split_regex to compile");
+    Regex::new(&re).expect("expected split_regex to compile")
 }
 
 /// Pretokenize a chunk of text and return its associated SequenceBuilder.
@@ -63,12 +61,11 @@ impl SequenceBuilder {
                 self.sequences.insert(bytes.to_vec(), 1);
             }
             Some(count) => {
-                *count = *count + 1;
+                *count += 1;
             }
         }
     }
 
-    #[cfg(test)]
     pub fn counts(&self) -> &FxHashMap<Vec<u8>, usize> {
         &self.sequences
     }

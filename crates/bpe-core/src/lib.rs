@@ -5,9 +5,12 @@ use std::{
     path::PathBuf,
 };
 
+use itertools::Itertools;
 use memchr::memmem;
 use memmap2::Mmap;
 use thiserror::Error;
+
+use crate::pretok::pretokenize_chunk;
 
 mod pretok;
 
@@ -28,9 +31,19 @@ pub fn tokenize(
     let m = open_file(path)?;
 
     // For now just use the first special token
+    let special_tokens_str = special_tokens.iter().map(|s| s.as_str()).collect_vec();
     let first_token = special_tokens
         .first()
+        .map(|s| s.as_bytes())
         .ok_or(BpeError::SpecialTokensRequired)?;
+
+    let chunks = chunk_with_readahead(&m, first_token, 1024 * 1024, 4096);
+
+    // todo: parallelize
+    for chunk in chunks {
+        let sb = pretokenize_chunk(chunk, &special_tokens_str);
+        println!("Got {} distinct sequences in this chunk", sb.counts().len());
+    }
 
     Ok(())
 }
@@ -70,10 +83,6 @@ fn chunk_with_readahead<'a>(
     }
 
     ret
-}
-
-fn chunk<'a>(file: &'a [u8], split_token: &[u8], estimated_chunk_size: usize) -> Vec<&'a [u8]> {
-    chunk_with_readahead(file, split_token, estimated_chunk_size, 4096)
 }
 
 fn open_file(path: PathBuf) -> Result<Mmap, std::io::Error> {
