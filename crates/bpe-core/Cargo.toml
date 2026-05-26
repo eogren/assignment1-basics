@@ -1,0 +1,12 @@
+[package]
+# `name` here is name of the package.
+name = "bpe-core"
+# these are good defaults:
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fancy-regex = "0.18.0"
+itertools = "0.14.0"
+memchr = "2.8.0"
+rustc-hash = "2.1.2"

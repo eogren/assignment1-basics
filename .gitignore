@@ -161,3 +161,9 @@ cython_debug/
 
 .ruff_cache/
 *.zip
+
+# Training data (re-downloadable via download.sh)
+/data/
+
+# Rustfmt backups
+**/*.rs.bk
