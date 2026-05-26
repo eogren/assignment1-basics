@@ -1,16 +1,24 @@
 use std::{
     cmp::min,
+    fmt::Debug,
     fs::File,
     io::{Error, ErrorKind},
     path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
 };
 
 use itertools::Itertools;
 use memchr::memmem;
 use memmap2::Mmap;
+use rayon::prelude::*;
 use thiserror::Error;
 
-use crate::pretok::pretokenize_chunk;
+use crate::pretok::{pretokenize_chunk, SequenceBuilder};
 
 mod pretok;
 
@@ -30,11 +38,12 @@ pub trait Interrupt {
     fn check(&self) -> Result<(), BpeError>;
 }
 
+#[tracing::instrument(skip(interrupt_fn))]
 pub fn tokenize(
     path: PathBuf,
     num_tokens: u32,
     special_tokens: Vec<String>,
-    interrupt_fn: impl Interrupt,
+    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
 ) -> Result<(), BpeError> {
     if num_tokens < 256 {
         return Err(BpeError::VocabTooSmall);
@@ -51,16 +60,47 @@ pub fn tokenize(
 
     let chunks = chunk_with_readahead(&m, first_token, 1024 * 1024, 4096);
 
-    let mut num_chunks = 0;
-    // todo: parallelize
-    for chunk in chunks {
-        let sb = pretokenize_chunk(chunk, &special_tokens_str);
-        println!("Got {} distinct sequences in this chunk", sb.counts().len());
-        num_chunks += 1;
-        if num_chunks % 10 == 0 {
-            interrupt_fn.check()?;
-        }
-    }
+    let stop_signal = Arc::new(AtomicBool::new(false));
+    let watchdog_stop_signal = stop_signal.clone();
+
+    let chunks = std::thread::scope(|s| {
+        thread::Builder::new()
+            .name("python-watchdog".to_string())
+            .spawn_scoped(s, || {
+                while !watchdog_stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                    if interrupt_fn.check().is_err() {
+                        watchdog_stop_signal.store(true, Ordering::Relaxed);
+                    }
+
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            })
+            .expect("spawn should succeed");
+
+        let merged_chunks = chunks
+            .par_iter()
+            .map(|chunk| {
+                if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                    None
+                } else {
+                    Some(pretokenize_chunk(chunk, &special_tokens_str))
+                }
+            })
+            .try_reduce(SequenceBuilder::new, |s1, s2| {
+                Some(SequenceBuilder::merge(s1, s2))
+            });
+
+            
+        // Stop watchdog
+        stop_signal.store(true, Ordering::Relaxed);
+        merged_chunks
+    })
+    .expect("should be able to retrieve chunks");
+
+    println!(
+        "Parallelized: got {} total sequences in all chunks",
+        chunks.counts().len()
+    );
 
     Ok(())
 }
@@ -126,6 +166,7 @@ mod tests {
     const CHUNK: &[u8] = b"Hello World ";
 
     struct NoOpInterrupt {}
+
     impl Interrupt for NoOpInterrupt {
         fn check(&self) -> Result<(), BpeError> {
             Ok(())

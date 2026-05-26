@@ -25,7 +25,7 @@ impl From<PyBpeError> for PyErr {
 struct PythonInterrupt {}
 
 fn pyerr_to_bpe(e: &PyErr) -> bpe_core::BpeError {
-    let io_err = std::io::Error::new(std::io::ErrorKind::Other, e.to_string());
+    let io_err = std::io::Error::other(e.to_string());
     bpe_core::BpeError::IoError(io_err)
 }
 
