@@ -44,6 +44,7 @@ pub(crate) fn pretokenize_chunk(chunk: &[u8], special_tokens: &[&str]) -> Sequen
     ret
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct SequenceBuilder {
     sequences: FxHashMap<Vec<u8>, usize>,
 }
@@ -180,6 +181,21 @@ impl<'a> Iterator for SequencesIter<'a> {
 mod tests {
     use super::*;
 
+    fn get_sequence_builders() -> (SequenceBuilder, SequenceBuilder) {
+        let mut s = SequenceBuilder::new();
+
+        s.append(b"Hello");
+        s.append(b"world");
+        s.append(b"Hello");
+
+        let mut s2 = SequenceBuilder::new();
+
+        s2.append(b"Hi");
+        s2.append(b"world");
+
+        (s, s2)
+    }
+
     #[test]
     pub fn test_sequence_builder() {
         let mut s = SequenceBuilder::new();
@@ -197,16 +213,7 @@ mod tests {
 
     #[test]
     pub fn test_sequence_builder_merge() {
-        let mut s1 = SequenceBuilder::new();
-
-        s1.append(b"Hello");
-        s1.append(b"world");
-        s1.append(b"Hello");
-
-        let mut s2 = SequenceBuilder::new();
-
-        s2.append(b"Hi");
-        s2.append(b"world");
+        let (s1, s2) = get_sequence_builders();
 
         let merged = SequenceBuilder::merge(s1, s2);
         assert_eq!(merged.counts().len(), 3);
@@ -231,6 +238,17 @@ mod tests {
                 .expect("expected hi in map"),
             1
         );
+    }
+
+    #[test]
+    pub fn test_merge_symmetric() {
+        let (first_s1, first_s2) = get_sequence_builders();
+        let first_merged = SequenceBuilder::merge(first_s1, first_s2);
+
+        let (second_s1, second_s2) = get_sequence_builders();
+        let second_merged = SequenceBuilder::merge(second_s2, second_s1);
+
+        assert_eq!(first_merged, second_merged);
     }
 
     #[test]
