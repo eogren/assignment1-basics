@@ -10,7 +10,7 @@ struct CountVal {
 
 /// SequenceShard keeps track of a set of token sequences
 /// and handles the logic around merging sequences together.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct SequenceShard {
     /// raw data for all the sequences. this will eventually
     /// be manipulated when merges occur.
@@ -76,16 +76,16 @@ impl<'a> SequenceCursor<'a> {
     /// Advance the cursor to the next pair element (or do nothin if it's already
     /// at the end). If the cursor is now at the end will also return false.
     pub fn next(&mut self) -> bool {
-        match self.get_sequence_index_of_current_pair() {
-            Some(idx) => self.idx_before_pair = Some(idx),
-            None => (),
+        if let Some(idx) = self.get_sequence_index_of_current_pair() {
+            self.idx_before_pair = Some(idx)
         }
+        
         self.is_done()
     }
 
     /// Is this cursor at the end?
     pub fn is_done(&self) -> bool {
-        self.current_pair() == None
+        self.current_pair().is_none()
     }
 
     /// Merge the current pair into a new token and update the cursor accordingly.
@@ -138,8 +138,7 @@ impl<'a> SequenceCursor<'a> {
 
         if counts.is_none() {
             if delta < 0 {
-                assert!(
-                    false,
+                panic!(
                     "expect pair to be in index if we are subtracting counts"
                 );
             }
@@ -202,13 +201,13 @@ pub(crate) struct CountInfo {
 
 impl SequenceShard {
     pub fn new() -> Self {
-        return Self::default();
+        Self::default()
     }
 
     /// Add a given sequence to this shard. Sequence is a series of tokens.
     pub fn push(&mut self, sequence: &[u32], dup_count: u32) {
         assert!(dup_count > 0, "dup_count cannot be zero");
-        assert!(sequence.len() > 0, "sequence cannot be empty");
+        assert!(!sequence.is_empty(), "sequence cannot be empty");
 
         // start_idx = index into self.sequences<> where the
         // sequence will start.
@@ -306,18 +305,6 @@ impl SequenceShard {
                         num_occurrences: 1,
                     }]
                 });
-        }
-    }
-}
-
-impl Default for SequenceShard {
-    fn default() -> Self {
-        Self {
-            sequences: Vec::new(),
-            start_index: Vec::new(),
-            duplicates: Vec::new(),
-            next_token: Vec::new(),
-            count_index: FxHashMap::default(),
         }
     }
 }
