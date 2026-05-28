@@ -18,7 +18,10 @@ use memmap2::Mmap;
 use rayon::prelude::*;
 use thiserror::Error;
 
-use crate::pretok::{pretokenize_chunk, SequenceBuilder};
+use crate::{
+    pretok::{pretokenize_chunk, SequenceBuilder},
+    sequence::{CountInfo, SequenceShard},
+};
 
 mod pretok;
 mod sequence;
@@ -51,7 +54,50 @@ pub fn tokenize(
     }
 
     let m = open_file(path)?;
+    let chunks = pretokenize(&m, &special_tokens, interrupt_fn)?;
+    println!(
+        "Parallelized: got {} total sequences in all chunks",
+        chunks.counts().len()
+    );
 
+    // For now, one sequence chunk
+    let mut shard = SequenceShard::new();
+    for (k, v) in chunks.counts() {
+        let tokens: Vec<u32> = k.iter().copied().map(u32::from).collect();
+        shard.push(
+            &tokens,
+            u32::try_from(*v).expect("size should fit into u32"),
+        );
+    }
+
+    let counts = shard.counts();
+    let biggest_pair = counts.par_iter().reduce(
+        || &CountInfo {
+            token_pair: (0, 0),
+            count: 0,
+        },
+        |s1, s2| {
+            if s1.count > s2.count {
+                s1
+            } else {
+                s2
+            }
+        },
+    );
+
+    println!(
+        "Most common pair is ({}, {}) with {} occurrences",
+        biggest_pair.token_pair.0, biggest_pair.token_pair.1, biggest_pair.count
+    );
+    Ok(())
+}
+
+#[tracing::instrument(skip(m, interrupt_fn))]
+fn pretokenize(
+    m: &Mmap,
+    special_tokens: &Vec<String>,
+    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
+) -> Result<SequenceBuilder, BpeError> {
     // For now just use the first special token
     let special_tokens_str = special_tokens.iter().map(|s| s.as_str()).collect_vec();
     let first_token = special_tokens
@@ -97,12 +143,7 @@ pub fn tokenize(
     })
     .expect("should be able to retrieve chunks");
 
-    println!(
-        "Parallelized: got {} total sequences in all chunks",
-        chunks.counts().len()
-    );
-
-    Ok(())
+    Ok(chunks)
 }
 
 /// Chunk the given file with approx `estimated_chunk_size` chunks.
