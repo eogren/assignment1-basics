@@ -404,6 +404,9 @@ mod tests {
         let mut s = SequenceShard::new();
 
         s.push(&[1, 1, 1, 1, 1], 2);
+
+        // Greedy merge:
+        // [1, 1, 1, 1, 1] -> [2, 1, 1, 1] -> [2, 2, 1]
         s.merge_pair((1, 1), 2);
         let counts = s.counts();
 
@@ -416,7 +419,7 @@ mod tests {
                 assert_eq!(count.count, 2);
                 pairs_two_founds = true;
             } else if count.token_pair == (2, 1) {
-                assert_eq!(count.count, 1);
+                assert_eq!(count.count, 2);
                 pairs_one_two_found = true;
             } else {
                 assert!(
