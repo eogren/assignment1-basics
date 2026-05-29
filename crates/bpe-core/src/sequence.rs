@@ -156,14 +156,24 @@ impl<'a> SequenceCursor<'a> {
         let my_count = counts
             .unwrap()
             .iter_mut()
-            .find(|ci| ci.sequence_index as usize == self.sequence_idx)
-            .expect("should always find this sequence in index");
+            .find(|ci| ci.sequence_index as usize == self.sequence_idx);
 
-        let new_count = my_count
-            .num_occurrences
-            .checked_add_signed(delta)
-            .expect("should not under/overflow");
-        my_count.num_occurrences = new_count;
+        if let Some(found_my_count) = my_count {
+            let new_count = found_my_count
+                .num_occurrences
+                .checked_add_signed(delta)
+                .expect("should not under/overflow");
+            found_my_count.num_occurrences = new_count;
+        } else {
+            self.shard.count_index.insert(
+                pair,
+                vec![CountVal {
+                    sequence_index: u32::try_from(self.sequence_idx)
+                        .expect("sequence should fit in u32"),
+                    num_occurrences: 1,
+                }],
+            );
+        }
     }
 
     fn get_sequence_index_of_current_pair(&self) -> Option<usize> {
