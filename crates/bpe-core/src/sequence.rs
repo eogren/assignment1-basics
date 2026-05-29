@@ -134,7 +134,7 @@ impl<'a> SequenceCursor<'a> {
 
     /// Update the count index for given pair.
     fn update_count(&mut self, pair: (u32, u32), delta: i32) {
-        let counts = self.shard.count_index.get_mut(&pair);
+        let mut counts = self.shard.count_index.get_mut(&pair);
 
         if counts.is_none() {
             if delta < 0 {
@@ -153,8 +153,9 @@ impl<'a> SequenceCursor<'a> {
             return;
         }
 
-        let my_count = counts
-            .unwrap()
+        let counts_unwrapped = counts.unwrap();
+
+        let my_count = counts_unwrapped
             .iter_mut()
             .find(|ci| ci.sequence_index as usize == self.sequence_idx);
 
@@ -165,14 +166,11 @@ impl<'a> SequenceCursor<'a> {
                 .expect("should not under/overflow");
             found_my_count.num_occurrences = new_count;
         } else {
-            self.shard.count_index.insert(
-                pair,
-                vec![CountVal {
-                    sequence_index: u32::try_from(self.sequence_idx)
-                        .expect("sequence should fit in u32"),
-                    num_occurrences: 1,
-                }],
-            );
+            counts_unwrapped.push(CountVal {
+                sequence_index: u32::try_from(self.sequence_idx)
+                    .expect("sequence should fit in u32"),
+                num_occurrences: 1,
+            });
         }
     }
 
@@ -363,6 +361,46 @@ mod tests {
 
         let mut c = s.cursor_mut(0);
         assert_eq!(to_pairs(&mut c), vec![(1, 1), (1, 2), (2, 3)]);
+    }
+
+    #[test]
+    pub fn test_two_sequences() {
+        let mut s = SequenceShard::new();
+
+        s.push(&[3, 1, 1, 2], 2);
+        s.push(&[4, 1, 1, 5], 1);
+
+        {
+            let counts = s.counts();
+            // [3, 1] = 2
+            // [1, 1] = 2+1 = 3
+            // [1, 2] = 2
+            // [4, 1] = 1
+            // [1, 5] = 1
+
+            assert_eq!(counts.len(), 5);
+            let one_one = counts
+                .iter()
+                .find(|ci| ci.token_pair == (1, 1))
+                .expect("expected to find 1,1");
+            assert_eq!(one_one.count, 3);
+        }
+
+        s.merge_pair((1, 1), 6);
+        {
+            let counts = s.counts();
+            // [3, 6] = 2
+            // [6, 2] = 2
+            // [4, 6] = 1
+            // [6, 5] = 1
+
+            assert_eq!(counts.len(), 4);
+            let three_six = counts
+                .iter()
+                .find(|ci| ci.token_pair == (3, 6))
+                .expect("expected to find 3, 6");
+            assert_eq!(three_six.count, 2);
+        }
     }
 
     #[test]

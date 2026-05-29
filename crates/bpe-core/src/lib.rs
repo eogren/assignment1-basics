@@ -117,12 +117,36 @@ pub fn tokenize(
             .copied()
             .collect_vec();
 
-        token_dict.insert(new_token_id, new_token);
-
-        merge_list.push((
+        let new_merge = (
             token_dict[&biggest_pair.token_pair.0].clone(),
             token_dict[&biggest_pair.token_pair.1].clone(),
-        ));
+        );
+
+        println!(
+            "Merging ({}, {}) ('{:?}', '{:?}') into token {} ('{:?}')",
+            &biggest_pair.token_pair.0,
+            &biggest_pair.token_pair.1,
+            &new_merge.0,
+            &new_merge.1,
+            &new_token_id,
+            &new_token,
+        );
+        merge_list.push(new_merge);
+        assert_eq!(
+            token_dict.insert(new_token_id, new_token),
+            None,
+            "should never be replacing a token id"
+        );
+
+        debug_assert!(
+            merge_list
+                .iter()
+                .filter(|x| x.0 == token_dict[&biggest_pair.token_pair.0]
+                    && x.1 == token_dict[&biggest_pair.token_pair.1])
+                .count()
+                == 1,
+            "should never have dupes in merge list"
+        );
     }
     Ok((token_dict, merge_list))
 }
