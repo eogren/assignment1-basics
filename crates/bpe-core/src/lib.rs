@@ -1,5 +1,6 @@
 use std::{
     cmp::min,
+    collections::HashMap,
     fmt::Debug,
     fs::File,
     io::{Error, ErrorKind},
@@ -43,18 +44,30 @@ pub trait Interrupt {
 }
 
 #[tracing::instrument(skip(interrupt_fn))]
-pub fn tokenize(
+pub fn tokenize_file(
     path: PathBuf,
     num_tokens: u32,
     special_tokens: Vec<String>,
     interrupt_fn: impl Interrupt + Send + std::marker::Sync,
-) -> Result<(), BpeError> {
+) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
+    let m = open_file(path)?;
+    tokenize(&m, num_tokens, special_tokens, interrupt_fn)
+}
+
+pub fn tokenize(
+    buf: &[u8],
+    num_tokens: u32,
+    special_tokens: Vec<String>,
+    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
+) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
     if num_tokens < 256 {
         return Err(BpeError::VocabTooSmall);
     }
 
-    let m = open_file(path)?;
-    let chunks = pretokenize(&m, &special_tokens, interrupt_fn)?;
+    let mut token_dict = starting_token_dict(&special_tokens);
+    let mut merge_list = Vec::new();
+
+    let chunks = pretokenize(buf, &special_tokens, interrupt_fn)?;
     println!(
         "Parallelized: got {} total sequences in all chunks",
         chunks.counts().len()
@@ -70,6 +83,7 @@ pub fn tokenize(
         );
     }
 
+    // TODO: loop til we get to new tokens
     let counts = shard.counts();
     let biggest_pair = counts.par_iter().reduce(
         || &CountInfo {
@@ -79,22 +93,40 @@ pub fn tokenize(
         |s1, s2| {
             if s1.count > s2.count {
                 s1
-            } else {
+            } else if s1.count < s2.count {
                 s2
+            } else {
+                if s1.token_pair > s2.token_pair {
+                    s1
+                } else {
+                    s2
+                }
             }
         },
     );
 
-    println!(
-        "Most common pair is ({}, {}) with {} occurrences",
-        biggest_pair.token_pair.0, biggest_pair.token_pair.1, biggest_pair.count
-    );
-    Ok(())
+    let new_token_id = u32::try_from(token_dict.len()).expect("tokens should fit in u32");
+
+    shard.merge_pair(biggest_pair.token_pair, new_token_id);
+
+    // TODO: probably a better rust-y way to do this
+    let mut new_token = token_dict[&biggest_pair.token_pair.0].clone();
+    for c in &token_dict[&biggest_pair.token_pair.1] {
+        new_token.push(*c);
+    }
+
+    token_dict.insert(new_token_id, new_token);
+
+    merge_list.push((
+        token_dict[&biggest_pair.token_pair.0].clone(),
+        token_dict[&biggest_pair.token_pair.1].clone(),
+    ));
+    Ok((token_dict, merge_list))
 }
 
 #[tracing::instrument(skip(m, interrupt_fn))]
 fn pretokenize(
-    m: &Mmap,
+    m: &[u8],
     special_tokens: &Vec<String>,
     interrupt_fn: impl Interrupt + Send + std::marker::Sync,
 ) -> Result<SequenceBuilder, BpeError> {
@@ -105,7 +137,7 @@ fn pretokenize(
         .map(|s| s.as_bytes())
         .ok_or(BpeError::SpecialTokensRequired)?;
 
-    let chunks = chunk_with_readahead(&m, first_token, 1024 * 1024, 4096);
+    let chunks = chunk_with_readahead(m, first_token, 1024 * 1024, 4096);
 
     let stop_signal = Arc::new(AtomicBool::new(false));
     let watchdog_stop_signal = stop_signal.clone();
@@ -199,6 +231,24 @@ fn open_file(path: PathBuf) -> Result<Mmap, std::io::Error> {
     Ok(mmap)
 }
 
+fn starting_token_dict(tokens: &Vec<String>) -> HashMap<u32, Vec<u8>> {
+    let mut ret = HashMap::new();
+
+    for i in 0..255_u32 {
+        ret.insert(i, vec![u8::try_from(i).expect("0-255 should be in u8")]);
+    }
+
+    for token in tokens {
+        let bytes = token.bytes().collect_vec();
+        ret.insert(
+            u32::try_from(ret.len()).expect("token should fit in u32"),
+            bytes,
+        );
+    }
+
+    ret
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,7 +277,7 @@ mod tests {
     #[test]
     fn test_tokenize_err_on_invalid_file() {
         let i = NoOpInterrupt {};
-        let e = tokenize("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], i);
+        let e = tokenize_file("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], i);
         assert!(matches!(e, Err(BpeError::IoError(_))));
     }
 
@@ -235,7 +285,7 @@ mod tests {
     fn test_tokenize_no_tokens() {
         let i = NoOpInterrupt {};
         let file = tempfile::NamedTempFile::new().expect("failed to create file");
-        let e = tokenize(file.path().to_path_buf(), 500, vec![], i);
+        let e = tokenize_file(file.path().to_path_buf(), 500, vec![], i);
         assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
 }

@@ -79,7 +79,7 @@ impl<'a> SequenceCursor<'a> {
         if let Some(idx) = self.get_sequence_index_of_current_pair() {
             self.idx_before_pair = Some(idx)
         }
-        
+
         self.is_done()
     }
 
@@ -138,9 +138,7 @@ impl<'a> SequenceCursor<'a> {
 
         if counts.is_none() {
             if delta < 0 {
-                panic!(
-                    "expect pair to be in index if we are subtracting counts"
-                );
+                panic!("expect pair to be in index if we are subtracting counts");
             }
 
             self.shard.count_index.insert(
@@ -202,6 +200,11 @@ pub(crate) struct CountInfo {
 impl SequenceShard {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Length of sequences array. Used mostly for load balancing shards
+    pub fn sequence_len(&self) -> usize {
+        self.sequences.len()
     }
 
     /// Add a given sequence to this shard. Sequence is a series of tokens.

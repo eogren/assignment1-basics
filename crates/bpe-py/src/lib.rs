@@ -51,7 +51,7 @@ fn tokenize(
     let i = PythonInterrupt {};
 
     py.detach(move || {
-        bpe_core::tokenize(path, vocab_size, special_tokens, i).map_err(PyBpeError::from)
+        bpe_core::tokenize_file(path, vocab_size, special_tokens, i).map_err(PyBpeError::from)
     })?;
 
     Ok((HashMap::new(), Vec::new()))
