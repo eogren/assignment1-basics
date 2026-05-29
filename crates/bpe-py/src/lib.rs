@@ -50,11 +50,11 @@ fn tokenize(
 )> {
     let i = PythonInterrupt {};
 
-    py.detach(move || {
+    let ret = py.detach(move || {
         bpe_core::tokenize_file(path, vocab_size, special_tokens, i).map_err(PyBpeError::from)
     })?;
 
-    Ok((HashMap::new(), Vec::new()))
+    Ok(ret)
 }
 
 /// A Python module implemented in Rust. The name of this function must match
