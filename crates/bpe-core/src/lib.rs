@@ -1,5 +1,8 @@
 use std::{
-    cmp::min,
+    cmp::{
+        min,
+        Ordering::{Greater, Less},
+    },
     collections::HashMap,
     fmt::Debug,
     fs::File,
@@ -18,6 +21,7 @@ use memchr::memmem;
 use memmap2::Mmap;
 use rayon::prelude::*;
 use thiserror::Error;
+use tracing::debug;
 
 use crate::{
     pretok::{pretokenize_chunk, SequenceBuilder},
@@ -70,7 +74,7 @@ pub fn tokenize(
     let mut merge_list = Vec::new();
 
     let chunks = pretokenize(buf, &special_tokens, interrupt_fn)?;
-    println!(
+    debug!(
         "Parallelized: got {} total sequences in all chunks",
         chunks.counts().len()
     );
@@ -92,18 +96,10 @@ pub fn tokenize(
                 token_pair: (0, 0),
                 count: 0,
             },
-            |s1, s2| {
-                if s1.count > s2.count {
-                    s1
-                } else if s1.count < s2.count {
-                    s2
-                } else {
-                    if s1.token_pair > s2.token_pair {
-                        s1
-                    } else {
-                        s2
-                    }
-                }
+            |s1, s2| match s1.compare_to(s2, &token_dict) {
+                Greater => s1,
+                Less => s2,
+                _ => panic!("Unexpected result from comparing CountInfos"),
             },
         );
 
@@ -122,7 +118,7 @@ pub fn tokenize(
             token_dict[&biggest_pair.token_pair.1].clone(),
         );
 
-        println!(
+        debug!(
             "Merging ({}, {}) ('{:?}', '{:?}') into token {} ('{:?}')",
             &biggest_pair.token_pair.0,
             &biggest_pair.token_pair.1,

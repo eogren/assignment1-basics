@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{collections::HashMap, num::NonZeroU32};
 
 use rustc_hash::FxHashMap;
 
@@ -205,6 +205,36 @@ pub(crate) struct CountInfo {
     pub count: u32,
 }
 
+impl CountInfo {
+    pub fn compare_to(
+        &self,
+        other: &CountInfo,
+        token_dict: &HashMap<u32, Vec<u8>>,
+    ) -> std::cmp::Ordering {
+        if self.count > other.count {
+            return std::cmp::Ordering::Greater;
+        }
+
+        if self.count < other.count {
+            return std::cmp::Ordering::Less;
+        }
+
+        self.get_token_tuple(&token_dict)
+            .cmp(&other.get_token_tuple(&token_dict))
+    }
+
+    fn get_token_tuple<'a>(&self, token_dict: &'a HashMap<u32, Vec<u8>>) -> (&'a [u8], &'a [u8]) {
+        (
+            token_dict
+                .get(&self.token_pair.0)
+                .expect("first token in pair should exist"),
+            token_dict
+                .get(&self.token_pair.1)
+                .expect("second pair in token should exist"),
+        )
+    }
+}
+
 impl SequenceShard {
     pub fn new() -> Self {
         Self::default()
@@ -322,6 +352,8 @@ impl SequenceShard {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering::{Greater, Less};
+
     use super::*;
 
     #[test]
@@ -470,5 +502,51 @@ mod tests {
 
         assert!(pairs_one_two_found, "Didn't find (2,1) pair");
         assert!(pairs_two_founds, "Didn't find (2,2) pair");
+    }
+
+    #[test]
+    fn test_compare_by_count() {
+        let token_dict = HashMap::new();
+        let c1 = CountInfo {
+            token_pair: (1, 2),
+            count: 5,
+        };
+
+        let c2 = CountInfo {
+            token_pair: (3, 4),
+            count: 4,
+        };
+
+        assert_eq!(c1.compare_to(&c2, &token_dict), Greater);
+        assert_eq!(c2.compare_to(&c1, &token_dict), Less);
+    }
+
+    #[test]
+    fn test_compare_lexographically() {
+        let mut token_dict = HashMap::new();
+        token_dict.insert(1, b"ab".to_vec());
+        token_dict.insert(2, b"c".to_vec());
+        token_dict.insert(3, b"a".to_vec());
+        token_dict.insert(4, b"bc".to_vec());
+
+        let c1 = CountInfo {
+            token_pair: (1, 2),
+            count: 5,
+        };
+
+        let c2 = CountInfo {
+            token_pair: (3, 4),
+            count: 5,
+        };
+
+        // Concrete divergence:
+        //  - Pair A = (b"ab", b"c") → concat b"abc"
+        //  - Pair B = (b"a", b"bc") → concat b"abc"
+        //
+        //  Concatenated, they're equal. As tuples, A > B (because b"ab" > b"a"). The Python reference compares
+        //  tuples — (b'e', b'l') vs (b'l', b'e') — so for spec-correctness you want tuple ordering, not
+        //  concatenated.
+        assert_eq!(c1.compare_to(&c2, &token_dict), Greater);
+        assert_eq!(c2.compare_to(&c1, &token_dict), Less);
     }
 }

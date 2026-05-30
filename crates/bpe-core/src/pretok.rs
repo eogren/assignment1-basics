@@ -8,7 +8,7 @@ static GPT2_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn gpt_regex() -> &'static Regex {
     GPT2_REGEX.get_or_init(|| {
-        Regex::new(r#"(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#)
+        Regex::new(r#"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#)
             .expect("expected gpt2 regex to compile")
     })
 }
@@ -278,6 +278,20 @@ mod tests {
         assert_eq!(counts.len(), 8);
         assert!(counts.contains_key(b"!".as_slice()));
         assert!(counts.contains_key(b" tokens".as_slice()));
+    }
+
+    #[test]
+    pub fn test_apost() {
+        let special_tokens = vec!["<|endoftext|>"];
+        let s = "don't students think";
+
+        let builder = pretokenize_chunk(s.as_bytes(), &special_tokens);
+        let counts = builder.counts();
+        assert_eq!(counts.len(), 4);
+        assert!(counts.contains_key(b"don".as_slice()));
+        assert!(counts.contains_key(b"'t".as_slice()));
+        assert!(counts.contains_key(b" students".as_slice()));
+        assert!(counts.contains_key(b" think".as_slice()));
     }
 
     /*
