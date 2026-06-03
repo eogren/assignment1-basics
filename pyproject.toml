@@ -35,7 +35,10 @@ features = ["pyo3/extension-module"]
 python-preference = "managed"
 
 [dependency-groups]
-dev = ["maturin>=1.7,<2.0"]
+dev = [
+    "maturin>=1.7,<2.0",
+    "ruff>=0.15.8",
+]
 
 [tool.pytest.ini_options]
 log_cli = true
