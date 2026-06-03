@@ -7,5 +7,6 @@ except importlib.metadata.PackageNotFoundError:
 
 from .linear import Linear
 from .embedding import Embedding
+from .tokenizer import Tokenizer
 
-__all__ = ["Embedding", "Linear"]
+__all__ = ["Embedding", "Linear", "Tokenizer"]
