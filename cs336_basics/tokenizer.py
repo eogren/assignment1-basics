@@ -71,6 +71,32 @@ def deserialize_vocab(input: SupportsRead[str]) -> dict[int, bytes]:
     return ret
 
 
+def serialize_merges(out: SupportsWrite[str], merges: list[tuple[bytes, bytes]]):
+    """Serialize the given merges to the output buffer."""
+    printable_merges = [
+        dict(first=_bytes_to_printable(first), second=_bytes_to_printable(second)) for first, second in merges
+    ]
+
+    json.dump(dict(version=_CURRENT_VOCAB_VER, merges=printable_merges), out)
+
+
+def deserialize_merge(input: SupportsRead[str]) -> list[tuple[bytes, bytes]]:
+    """Deserialize merges serialized with serialize_merges."""
+    parsed = json.load(input)
+    if "version" not in parsed or parsed["version"] != _CURRENT_VOCAB_VER:
+        raise ValueError(f"Failed to parse object {0} - version not found or wrong", parsed)
+
+    ret = []
+
+    for obj in parsed["merges"]:
+        first = _printable_to_bytes(obj["first"])
+        second = _printable_to_bytes(obj["second"])
+
+        ret.append((first, second))
+
+    return ret
+
+
 class Tokenizer:
     def __init__(
         self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None

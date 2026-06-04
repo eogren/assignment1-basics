@@ -1,6 +1,6 @@
 from io import StringIO
 
-from cs336_basics.tokenizer import deserialize_vocab, serialize_vocab
+from cs336_basics.tokenizer import deserialize_merge, deserialize_vocab, serialize_merges, serialize_vocab
 
 
 def test_is_printable():
@@ -35,3 +35,22 @@ def test_vocab_serde():
     rtt_vocab = deserialize_vocab(output_buf)
 
     assert vocab == rtt_vocab
+
+
+def test_merge_serde():
+    orig_merges = []
+
+    # Generate every 2 byte combo we have as part of vocab
+    for first_i in range(0, 256):
+        first = bytes(first_i)
+        for second_i in range(0, 10):
+            for second_j in range(25, 35):
+                second = bytes([second_i, second_j])
+                orig_merges.append((first, second))
+
+    output_buf = StringIO()
+    serialize_merges(output_buf, orig_merges)
+    output_buf.seek(0)
+    rtt_merges = deserialize_merge(output_buf)
+
+    assert orig_merges == rtt_merges
