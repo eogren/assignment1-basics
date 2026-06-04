@@ -1,7 +1,7 @@
 use std::{
     cmp::{
-        min,
         Ordering::{Greater, Less},
+        min,
     },
     collections::HashMap,
     fmt::Debug,
@@ -9,8 +9,11 @@ use std::{
     io::{Error, ErrorKind},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{
+            AtomicBool, AtomicU32,
+            Ordering::{self, Relaxed},
+        },
     },
     thread,
     time::Duration,
@@ -24,7 +27,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use crate::{
-    pretok::{pretokenize_chunk, SequenceBuilder},
+    pretok::{SequenceBuilder, pretokenize_chunk},
     sequence::{CountInfo, SequenceShard},
 };
 
@@ -43,26 +46,34 @@ pub enum BpeError {
     IoError(#[from] std::io::Error),
 }
 
-pub trait Interrupt {
-    fn check(&self) -> Result<(), BpeError>;
+/// Keeps track of the progress of the tokenize() function.
+#[derive(Debug, Default)]
+pub struct ProgressInfo {
+    pub pretoken_unique_sequences: AtomicU32,
+
+    pub pretoken_total_shards: AtomicU32,
+    pub pretoken_done_shards: AtomicU32,
+    pub tokenizer_merges_done: AtomicU32,
+
+    pub should_stop: AtomicBool,
 }
 
-#[tracing::instrument(skip(interrupt_fn))]
+#[tracing::instrument(skip(progress_info))]
 pub fn tokenize_file(
     path: PathBuf,
     num_tokens: u32,
     special_tokens: Vec<String>,
-    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
+    progress_info: Option<Arc<ProgressInfo>>,
 ) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
     let m = open_file(path)?;
-    tokenize(&m, num_tokens, special_tokens, interrupt_fn)
+    tokenize(&m, num_tokens, special_tokens, progress_info)
 }
 
 pub fn tokenize(
     buf: &[u8],
     num_tokens: u32,
     special_tokens: Vec<String>,
-    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
+    progress_info: Option<Arc<ProgressInfo>>,
 ) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
     if num_tokens
         < 256 + u32::try_from(special_tokens.len()).expect("special tokens should fit into u32")
@@ -73,11 +84,20 @@ pub fn tokenize(
     let mut token_dict = starting_token_dict(&special_tokens);
     let mut merge_list = Vec::new();
 
-    let chunks = pretokenize(buf, &special_tokens, interrupt_fn)?;
-    debug!(
-        "Parallelized: got {} total sequences in all chunks",
-        chunks.counts().len()
-    );
+    if let Some(ref pi) = progress_info {
+        pi.tokenizer_merges_done.store(
+            u32::try_from(token_dict.len()).expect("merges should fit in u32"),
+            Relaxed,
+        );
+    }
+
+    let chunks = pretokenize(buf, &special_tokens, progress_info.clone())?;
+    if let Some(ref pi) = progress_info {
+        pi.pretoken_unique_sequences.store(
+            u32::try_from(chunks.counts().len()).expect("sequence count should fit in u32"),
+            Relaxed,
+        );
+    }
 
     // For now, one sequence chunk
     let mut shard = SequenceShard::new();
@@ -143,15 +163,19 @@ pub fn tokenize(
                 == 1,
             "should never have dupes in merge list"
         );
+
+        if let Some(ref pi) = progress_info {
+            pi.tokenizer_merges_done.fetch_add(1, Relaxed);
+        }
     }
     Ok((token_dict, merge_list))
 }
 
-#[tracing::instrument(skip(m, interrupt_fn))]
+#[tracing::instrument(skip(m, progress_info))]
 fn pretokenize(
     m: &[u8],
     special_tokens: &Vec<String>,
-    interrupt_fn: impl Interrupt + Send + std::marker::Sync,
+    progress_info: Option<Arc<ProgressInfo>>,
 ) -> Result<SequenceBuilder, BpeError> {
     // For now just use the first special token
     let special_tokens_str = special_tokens.iter().map(|s| s.as_str()).collect_vec();
@@ -162,38 +186,54 @@ fn pretokenize(
 
     let chunks = chunk_with_readahead(m, first_token, 1024 * 1024, 4096);
 
-    let stop_signal = Arc::new(AtomicBool::new(false));
-    let watchdog_stop_signal = stop_signal.clone();
+    if let Some(ref pi) = progress_info {
+        pi.pretoken_total_shards.store(
+            u32::try_from(chunks.len()).expect("chunks should fit in u32"),
+            Relaxed,
+        );
+    }
+    let watchdog_stop_signal = progress_info.map(|p| p.clone());
 
-    let chunks = std::thread::scope(|s| {
-        thread::Builder::new()
-            .name("python-watchdog".to_string())
-            .spawn_scoped(s, || {
-                while !watchdog_stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
-                    if interrupt_fn.check().is_err() {
-                        watchdog_stop_signal.store(true, Ordering::Relaxed);
+    let chunks = std::thread::scope(|_s| {
+        /* TODO MOVE TO BPE-PY
+        if let Some(watchdog_pi) = watchdog_stop_signal {
+            thread::Builder::new()
+                .name("python-watchdog".to_string())
+                .spawn_scoped(s, || {
+                    while !watchdog_stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                        if interrupt_fn.check().is_err() {
+                            watchdog_stop_signal.store(true, Ordering::Relaxed);
+                        }
+
+                        std::thread::sleep(Duration::from_millis(500));
                     }
-
-                    std::thread::sleep(Duration::from_millis(500));
-                }
-            })
-            .expect("spawn should succeed");
+                })
+                .expect("spawn should succeed");
+        }
+        */
 
         let merged_chunks = chunks
             .par_iter()
             .map(|chunk| {
-                if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(watchdog_pi) = &watchdog_stop_signal
+                    && watchdog_pi
+                        .should_stop
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                {
                     None
                 } else {
-                    Some(pretokenize_chunk(chunk, &special_tokens_str))
+                    let ret = Some(pretokenize_chunk(chunk, &special_tokens_str));
+                    if let Some(watchdog_pi) = &watchdog_stop_signal {
+                        watchdog_pi.pretoken_done_shards.fetch_add(1, Relaxed);
+                    }
+
+                    ret
                 }
             })
             .try_reduce(SequenceBuilder::new, |s1, s2| {
                 Some(SequenceBuilder::merge(s1, s2))
             });
 
-        // Stop watchdog
-        stop_signal.store(true, Ordering::Relaxed);
         merged_chunks
     })
     .expect("should be able to retrieve chunks");
@@ -279,14 +319,6 @@ mod tests {
     const SEP: &[u8] = b" ";
     const CHUNK: &[u8] = b"Hello World ";
 
-    struct NoOpInterrupt {}
-
-    impl Interrupt for NoOpInterrupt {
-        fn check(&self) -> Result<(), BpeError> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn test_tiny_with_tiny_readahead() {
         let tiny_chunk = chunk_with_readahead(CHUNK, SEP, 1, 1);
@@ -299,16 +331,16 @@ mod tests {
 
     #[test]
     fn test_tokenize_err_on_invalid_file() {
-        let i = NoOpInterrupt {};
-        let e = tokenize_file("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], i);
+        let e = tokenize_file("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], None);
         assert!(matches!(e, Err(BpeError::IoError(_))));
     }
 
     #[test]
     fn test_tokenize_no_tokens() {
-        let i = NoOpInterrupt {};
         let file = tempfile::NamedTempFile::new().expect("failed to create file");
-        let e = tokenize_file(file.path().to_path_buf(), 500, vec![], i);
+        let e = tokenize_file(file.path().to_path_buf(), 500, vec![], None);
         assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
+
+    // todo check progress
 }
