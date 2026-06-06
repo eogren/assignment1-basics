@@ -1,8 +1,12 @@
 use bpe_core::BpeError::{SpecialTokensRequired, VocabTooSmall};
+use bpe_core::ProgressInfo;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 
 struct PyBpeError(bpe_core::BpeError);
 
@@ -22,39 +26,74 @@ impl From<PyBpeError> for PyErr {
     }
 }
 
-struct PythonInterrupt {}
-
-fn pyerr_to_bpe(e: &PyErr) -> bpe_core::BpeError {
-    let io_err = std::io::Error::other(e.to_string());
-    bpe_core::BpeError::IoError(io_err)
+#[pyclass(frozen)]
+#[derive(Default)]
+struct ProgressHandler {
+    progress: Arc<ProgressInfo>,
 }
 
-impl bpe_core::Interrupt for PythonInterrupt {
-    fn check(&self) -> Result<(), bpe_core::BpeError> {
-        Python::attach(|py| {
-            let r = py.check_signals();
-            r.map_err(|e| pyerr_to_bpe(&e))
-        })
+#[pyclass]
+#[derive(Debug, PartialEq, Eq)]
+struct Progress {
+    #[pyo3(get)]
+    pretoken_total_shards: u32,
+
+    #[pyo3(get)]
+    pretoken_done_shards: u32,
+
+    #[pyo3(get)]
+    tokenizer_merges_done: u32,
+}
+
+impl Progress {
+    fn new(pi: &ProgressInfo) -> Self {
+        Self {
+            pretoken_total_shards: pi.pretoken_total_shards.load(Relaxed),
+            pretoken_done_shards: pi.pretoken_done_shards.load(Relaxed),
+            tokenizer_merges_done: pi.tokenizer_merges_done.load(Relaxed),
+        }
+    }
+}
+
+#[pymethods]
+impl ProgressHandler {
+    #[new]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn values(slf: &Bound<'_, Self>) -> Progress {
+        Progress::new(&slf.get().progress)
     }
 }
 
 #[pyfunction]
+#[pyo3(signature = (path, vocab_size, special_tokens, progress_handler = None))]
 fn tokenize(
     py: Python<'_>,
     path: PathBuf,
     vocab_size: u32,
     special_tokens: Vec<String>,
+    progress_handler: Option<Py<ProgressHandler>>,
 ) -> PyResult<(
     HashMap<u32, Vec<u8>>,   /* vocab int->bytes */
     Vec<(Vec<u8>, Vec<u8>)>, /* merge list */
 )> {
-    let i = PythonInterrupt {};
+    let stop = Arc::new(AtomicBool::new(false));
 
     let ret = py.detach(move || {
-        bpe_core::tokenize_file(path, vocab_size, special_tokens, i).map_err(PyBpeError::from)
-    })?;
+        bpe_core::tokenize_file(
+            path,
+            vocab_size,
+            special_tokens,
+            progress_handler.map(|p| p.get().progress.clone()),
+        )
+        .map_err(PyBpeError::from)
+    });
 
-    Ok(ret)
+    stop.store(true, Relaxed);
+
+    ret.map_err(|e| e.into())
 }
 
 /// A Python module implemented in Rust. The name of this function must match
@@ -63,6 +102,7 @@ fn tokenize(
 #[pymodule]
 fn bpe_token(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
-
+    m.add_class::<Progress>()?;
+    m.add_class::<ProgressHandler>()?;
     Ok(())
 }

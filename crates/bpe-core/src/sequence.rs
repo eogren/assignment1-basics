@@ -134,7 +134,7 @@ impl<'a> SequenceCursor<'a> {
 
     /// Update the count index for given pair.
     fn update_count(&mut self, pair: (u32, u32), delta: i32) {
-        let mut counts = self.shard.count_index.get_mut(&pair);
+        let counts = self.shard.count_index.get_mut(&pair);
 
         if counts.is_none() {
             if delta < 0 {

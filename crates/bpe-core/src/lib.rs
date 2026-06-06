@@ -10,13 +10,8 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{
-            AtomicBool, AtomicU32,
-            Ordering::{self, Relaxed},
-        },
+        atomic::{AtomicBool, AtomicU32, Ordering::Relaxed},
     },
-    thread,
-    time::Duration,
 };
 
 use itertools::Itertools;
@@ -192,7 +187,7 @@ fn pretokenize(
             Relaxed,
         );
     }
-    let watchdog_stop_signal = progress_info.map(|p| p.clone());
+    let watchdog_stop_signal = progress_info;
 
     let chunks = std::thread::scope(|_s| {
         /* TODO MOVE TO BPE-PY
@@ -212,7 +207,7 @@ fn pretokenize(
         }
         */
 
-        let merged_chunks = chunks
+        chunks
             .par_iter()
             .map(|chunk| {
                 if let Some(watchdog_pi) = &watchdog_stop_signal
@@ -232,9 +227,7 @@ fn pretokenize(
             })
             .try_reduce(SequenceBuilder::new, |s1, s2| {
                 Some(SequenceBuilder::merge(s1, s2))
-            });
-
-        merged_chunks
+            })
     })
     .expect("should be able to retrieve chunks");
 

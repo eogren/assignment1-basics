@@ -105,7 +105,16 @@ class Tokenizer:
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
-        pass
+        vocab = None
+        merges = None
+
+        with open(vocab_filepath) as f:
+            vocab = deserialize_vocab(f)
+
+        with open(merges_filepath) as f:
+            merges = deserialize_merge(f)
+
+        Tokenizer(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:
         pass

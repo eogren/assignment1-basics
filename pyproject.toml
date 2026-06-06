@@ -21,6 +21,9 @@ dependencies = [
     "ruff>=0.15.8",
 ]
 
+[project.scripts]
+train_tokenizer = "cs336_basics.scripts.train_tokenizer:main"
+
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
