@@ -1,3 +1,6 @@
- [workspace]
+[workspace]
 members = ["crates/bpe-core", "crates/bpe-py"]
 resolver = "2"
+
+[profile.release]
+debug = true
