@@ -126,7 +126,6 @@ impl<'a> SequenceCursor<'a> {
     }
 
     /// Update the count index for given pair.
-    #[tracing::instrument(skip(self))]
     fn update_count(&mut self, pair: (u32, u32), delta: i32) {
         let counts = self.shard.count_index.get_mut(&pair);
         let seq_idx = u32::try_from(self.sequence_idx).expect("sequence_idx should fit in u32");

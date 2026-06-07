@@ -10,12 +10,12 @@ use tracing_subscriber::{
 };
 
 fn main() {
-    let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+    //let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
 
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
         .with(fmt::layer().with_span_events(FmtSpan::CLOSE)) // <- stdout, with span timing
-        .with(chrome_layer)
+//        .with(chrome_layer)
         .init();
 
     let pi = Arc::new(ProgressInfo::default());
