@@ -2,12 +2,6 @@ use std::{collections::HashMap, num::NonZeroU32};
 
 use rustc_hash::FxHashMap;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct CountVal {
-    pub sequence_index: u32,
-    pub num_occurrences: u32,
-}
-
 /// SequenceShard keeps track of a set of token sequences
 /// and handles the logic around merging sequences together.
 #[derive(Debug, Default)]
@@ -28,9 +22,8 @@ pub(crate) struct SequenceShard {
     /// twice, we may dedupe everything and set duplicates[0] to 2)
     duplicates: Vec<u32>,
 
-    /// cache of count of pairs. trading off some memory for
-    /// faster compute. maps (token, token) -> set{sequence_idx, count}
-    count_index: FxHashMap<(u32, u32), Vec<CountVal>>,
+    /// cache of count of pairs. maps (token, token) -> map of {sequence_idx -> count}
+    count_index: FxHashMap<(u32, u32), FxHashMap<u32, u32>>,
 }
 
 /// Iterate through pairs in a single sequence
@@ -133,45 +126,38 @@ impl<'a> SequenceCursor<'a> {
     }
 
     /// Update the count index for given pair.
+    #[tracing::instrument(skip(self))]
     fn update_count(&mut self, pair: (u32, u32), delta: i32) {
         let counts = self.shard.count_index.get_mut(&pair);
+        let seq_idx = u32::try_from(self.sequence_idx).expect("sequence_idx should fit in u32");
 
         if counts.is_none() {
             if delta < 0 {
                 panic!("expect pair to be in index if we are subtracting counts");
             }
 
-            self.shard.count_index.insert(
-                pair,
-                vec![CountVal {
-                    sequence_index: u32::try_from(self.sequence_idx)
-                        .expect("sequence should fit in u32"),
-                    num_occurrences: 1,
-                }],
+            let mut new_map = FxHashMap::default();
+            new_map.insert(
+                seq_idx,
+                u32::try_from(delta).expect("delta should convert here"),
             );
+
+            self.shard.count_index.insert(pair, new_map);
 
             return;
         }
 
         let counts_unwrapped = counts.unwrap();
 
-        let my_count = counts_unwrapped
-            .iter_mut()
-            .find(|ci| ci.sequence_index as usize == self.sequence_idx);
-
-        if let Some(found_my_count) = my_count {
-            let new_count = found_my_count
-                .num_occurrences
-                .checked_add_signed(delta)
-                .expect("should not under/overflow");
-            found_my_count.num_occurrences = new_count;
-        } else {
-            counts_unwrapped.push(CountVal {
-                sequence_index: u32::try_from(self.sequence_idx)
-                    .expect("sequence should fit in u32"),
-                num_occurrences: 1,
-            });
-        }
+        counts_unwrapped
+            .entry(seq_idx)
+            .and_modify(|e| {
+                let new_val = e
+                    .checked_add_signed(delta)
+                    .expect("never expect underflow here");
+                *e = new_val;
+            })
+            .or_insert_with(|| u32::try_from(delta).expect("delta should convert here"));
     }
 
     fn get_sequence_index_of_current_pair(&self) -> Option<usize> {
@@ -240,11 +226,6 @@ impl SequenceShard {
         Self::default()
     }
 
-    /// Length of sequences array. Used mostly for load balancing shards
-    pub fn sequence_len(&self) -> usize {
-        self.sequences.len()
-    }
-
     /// Add a given sequence to this shard. Sequence is a series of tokens.
     pub fn push(&mut self, sequence: &[u32], dup_count: u32) {
         assert!(dup_count > 0, "dup_count cannot be zero");
@@ -290,8 +271,8 @@ impl SequenceShard {
     /// Merge all instances of `pair` together, replacing them with new_token
     pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) {
         let sequences_with_pair = self.count_index.get(&pair).cloned().unwrap_or_default();
-        for sequence in sequences_with_pair {
-            let mut c = self.cursor_mut(sequence.sequence_index as usize);
+        for (sequence_index, _num_occurrences) in sequences_with_pair {
+            let mut c = self.cursor_mut(sequence_index as usize);
             while !c.is_done() {
                 let c_pair = c.current_pair().expect("current_pair should be valid");
                 if c_pair == pair {
@@ -311,7 +292,10 @@ impl SequenceShard {
 
         for (k, v) in self.count_index.iter() {
             let dup_count: u32 = v.iter().fold(0, |acc, e| {
-                acc + (e.num_occurrences * self.duplicates[e.sequence_index as usize])
+                let sequence_index = *e.0;
+                let num_occurrences = *e.1;
+
+                acc + (num_occurrences * self.duplicates[sequence_index as usize])
             });
             if dup_count > 0 {
                 ret.push(CountInfo {
@@ -324,6 +308,7 @@ impl SequenceShard {
         ret
     }
 
+    /// Update counts for the sequence_idx that was just recently added to this shard
     fn update_counts(&mut self, sequence_idx: u32) {
         let c = self.cursor_mut(usize::try_from(sequence_idx).expect("sequence should fit in u32"));
         let pairs = c.into_pairs();
@@ -331,20 +316,13 @@ impl SequenceShard {
             self.count_index
                 .entry(pair)
                 .and_modify(|e| {
-                    let pos = e.iter().position(|cv| cv.sequence_index == sequence_idx);
-                    match pos {
-                        Some(pos) => e[pos].num_occurrences += 1,
-                        None => e.push(CountVal {
-                            sequence_index: sequence_idx,
-                            num_occurrences: 1,
-                        }),
-                    }
+                    e.entry(sequence_idx).and_modify(|e| *e += 1).or_insert(1);
                 })
                 .or_insert_with(|| {
-                    vec![CountVal {
-                        sequence_index: sequence_idx,
-                        num_occurrences: 1,
-                    }]
+                    let mut new_map = FxHashMap::default();
+                    new_map.insert(sequence_idx, 1);
+
+                    new_map
                 });
         }
     }

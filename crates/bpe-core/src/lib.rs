@@ -19,7 +19,7 @@ use memchr::memmem;
 use memmap2::Mmap;
 use rayon::prelude::*;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     pretok::{SequenceBuilder, pretokenize_chunk},
@@ -94,16 +94,9 @@ pub fn tokenize(
         );
     }
 
-    // For now, one sequence chunk
-    let mut shard = SequenceShard::new();
-    for (k, v) in chunks.counts() {
-        let tokens: Vec<u32> = k.iter().copied().map(u32::from).collect();
-        shard.push(
-            &tokens,
-            u32::try_from(*v).expect("size should fit into u32"),
-        );
-    }
+    let mut shard = generate_sequence_shards(chunks);
 
+    info!("Starting merge passes");
     while token_dict.len() < num_tokens as usize {
         let counts = shard.counts();
         let biggest_pair = counts.par_iter().reduce(
@@ -166,6 +159,32 @@ pub fn tokenize(
     Ok((token_dict, merge_list))
 }
 
+#[tracing::instrument(skip(chunks))]
+fn generate_sequence_shards(chunks: SequenceBuilder) -> SequenceShard {
+    info!(
+        "Generating pair sequences from {} unique sequences from corpus",
+        chunks.counts().len()
+    );
+
+    let mut count = 0;
+
+    // For now, one sequence chunk
+    let mut shard = SequenceShard::new();
+    for (k, v) in chunks.counts() {
+        let tokens: Vec<u32> = k.iter().copied().map(u32::from).collect();
+        shard.push(
+            &tokens,
+            u32::try_from(*v).expect("size should fit into u32"),
+        );
+        count += 1;
+
+        if count % 1000 == 0 {
+            debug!("{} pairs generated", count);
+        }
+    }
+    shard
+}
+
 #[tracing::instrument(skip(m, progress_info))]
 fn pretokenize(
     m: &[u8],
@@ -181,6 +200,8 @@ fn pretokenize(
 
     let chunks = chunk_with_readahead(m, first_token, 1024 * 1024, 4096);
 
+    debug!("Pretokenize: {} chunks to process", chunks.len());
+
     if let Some(ref pi) = progress_info {
         pi.pretoken_total_shards.store(
             u32::try_from(chunks.len()).expect("chunks should fit in u32"),
@@ -190,23 +211,6 @@ fn pretokenize(
     let watchdog_stop_signal = progress_info;
 
     let chunks = std::thread::scope(|_s| {
-        /* TODO MOVE TO BPE-PY
-        if let Some(watchdog_pi) = watchdog_stop_signal {
-            thread::Builder::new()
-                .name("python-watchdog".to_string())
-                .spawn_scoped(s, || {
-                    while !watchdog_stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
-                        if interrupt_fn.check().is_err() {
-                            watchdog_stop_signal.store(true, Ordering::Relaxed);
-                        }
-
-                        std::thread::sleep(Duration::from_millis(500));
-                    }
-                })
-                .expect("spawn should succeed");
-        }
-        */
-
         chunks
             .par_iter()
             .map(|chunk| {

@@ -16,4 +16,7 @@ thiserror = "2.0.18"
 tracing = "0.1.44"
 
 [dev-dependencies]
+ctrlc = "3.5.2"
 tempfile = "3.27.0"
+tracing-chrome = "0.7.2"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
