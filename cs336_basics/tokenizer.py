@@ -109,16 +109,6 @@ def _validate_vocab(vocab: dict[int, bytes]):
         raise ValueError("Vocab seems corrupt - {} appears more than once in values", most_common)
 
 
-def _validate_merges(merges: list[tuple[bytes, bytes]]):
-    cnt = Counter()
-    for first, second in merges:
-        cnt[first] += 1
-
-    most_common = cnt.most_common(n=1)[0]
-    if most_common[1] != 1:
-        raise ValueError("Merges seems corrupt - {} appears more than once as merge source", most_common)
-
-
 def _convert_merges_to_tokens(
     reverse_vocab: dict[bytes, int], merges: list[tuple[bytes, bytes]]
 ) -> list[tuple[int, int, int]]:
@@ -146,7 +136,6 @@ class Tokenizer:
         _validate_vocab(vocab)
         self._vocab = vocab
 
-        _validate_merges(merges)
         self._merges = merges
 
         reverse_vocab = {v: k for k, v in vocab.items()}

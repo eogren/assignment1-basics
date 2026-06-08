@@ -5,8 +5,10 @@ try:
 except importlib.metadata.PackageNotFoundError:
     pass
 
+from .activations import Swiglu
 from .linear import Linear
 from .embedding import Embedding
 from .tokenizer import Tokenizer
+from .norms import RMSNorm
 
-__all__ = ["Embedding", "Linear", "Tokenizer"]
+__all__ = ["Embedding", "Linear", "RMSNorm", "Swiglu", "Tokenizer"]
