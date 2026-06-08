@@ -2,7 +2,6 @@ use std::sync::{Arc, atomic::Ordering::Relaxed};
 
 use bpe_core::ProgressInfo;
 use tracing::info;
-use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{
     EnvFilter,
     fmt::{self, format::FmtSpan},
@@ -15,7 +14,6 @@ fn main() {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
         .with(fmt::layer().with_span_events(FmtSpan::CLOSE)) // <- stdout, with span timing
-//        .with(chrome_layer)
         .init();
 
     let pi = Arc::new(ProgressInfo::default());

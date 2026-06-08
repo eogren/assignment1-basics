@@ -62,7 +62,6 @@ impl StatsCollector for RealStatsCollector {
                 let new_val = e
                     .checked_add_signed(delta)
                     .expect("never expect underflow here");
-                debug_assert!(new_val >= 0, "count of a pair should never go negative");
                 *e = new_val;
             })
             .or_insert_with(|| u32::try_from(delta).expect("delta should convert here"));
@@ -72,7 +71,7 @@ impl StatsCollector for RealStatsCollector {
         self.count_index
             .get(&pair)
             .map(|counts| counts.keys().copied().collect_vec())
-            .unwrap_or_else(|| Vec::new())
+            .unwrap_or_default()
     }
 }
 
@@ -272,8 +271,8 @@ impl CountInfo {
             return std::cmp::Ordering::Less;
         }
 
-        self.get_token_tuple(&token_dict)
-            .cmp(&other.get_token_tuple(&token_dict))
+        self.get_token_tuple(token_dict)
+            .cmp(&other.get_token_tuple(token_dict))
     }
 
     fn get_token_tuple<'a>(&self, token_dict: &'a HashMap<u32, Vec<u8>>) -> (&'a [u8], &'a [u8]) {
@@ -347,7 +346,7 @@ impl<S: StatsCollector> SequenceShard<S> {
     pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) {
         let sequences_with_pair = self.stats_collector.sequences_with_pair(pair);
         for sequence_index in sequences_with_pair {
-            let mut c = self.cursor_mut(sequence_index as usize);
+            let mut c = self.cursor_mut(sequence_index);
             while !c.is_done() {
                 let c_pair = c.current_pair().expect("current_pair should be valid");
                 if c_pair == pair {
