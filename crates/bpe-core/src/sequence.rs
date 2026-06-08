@@ -10,9 +10,6 @@ pub(crate) trait StatsCollector {
     /// Adjust sequence_idx's count of the given pair by delta. If the stats collector
     /// hasn't tracked any thing for this pair yet, we assume it has a count of 0.
     fn update_pair_count(&mut self, sequence_idx: usize, pair: (u32, u32), delta: i32);
-
-    // Return the sequence indexes of all sequences that contain the given pair
-    fn sequences_with_pair(&self, pair: (u32, u32)) -> Vec<usize>;
 }
 
 #[derive(Debug, Default)]
@@ -66,16 +63,16 @@ impl StatsCollector for RealStatsCollector {
             })
             .or_insert_with(|| u32::try_from(delta).expect("delta should convert here"));
     }
+}
 
+impl RealStatsCollector {
     fn sequences_with_pair(&self, pair: (u32, u32)) -> Vec<usize> {
         self.count_index
             .get(&pair)
             .map(|counts| counts.keys().copied().collect_vec())
             .unwrap_or_default()
     }
-}
 
-impl RealStatsCollector {
     pub fn counts(&self) -> Vec<CountInfo> {
         let mut ret = Vec::new();
 
@@ -101,6 +98,16 @@ impl RealStatsCollector {
         ret
     }
 }
+
+#[derive(Debug, Default)]
+pub(crate) struct NoOpStatsCollector {}
+
+impl StatsCollector for NoOpStatsCollector {
+    fn update_duplicate_count(&mut self, _sequence_idx: usize, _dup_count: u32) {}
+
+    fn update_pair_count(&mut self, _sequence_idx: usize, _pair: (u32, u32), _delta: i32) {}
+}
+
 /// SequenceShard keeps track of a set of token sequences
 /// and handles the logic around merging sequences together.
 #[derive(Debug, Default)]
@@ -341,21 +348,33 @@ impl<S: StatsCollector> SequenceShard<S> {
         SequenceCursor::new(self, sequence_idx)
     }
 
-    #[tracing::instrument(skip(self), fields(pair, new_token))]
-    /// Merge all instances of `pair` together, replacing them with new_token
-    pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) {
-        let sequences_with_pair = self.stats_collector.sequences_with_pair(pair);
-        for sequence_index in sequences_with_pair {
-            let mut c = self.cursor_mut(sequence_index);
-            while !c.is_done() {
-                let c_pair = c.current_pair().expect("current_pair should be valid");
-                if c_pair == pair {
-                    c.merge_pair(new_token);
-                } else {
-                    c.next();
+    /// Convert this shard into a sequence of every token it contains.
+    pub fn into_tokens(mut self) -> Vec<u32> {
+        let mut used = 0;
+
+        // walk through everything in the sequence array, collapsing
+        // next pointer
+        let num_sequences = self.start_index.len();
+        for sequence in 0..num_sequences {
+            let mut char_cursor_idx = self.start_index[sequence];
+            loop {
+                debug_assert!(
+                    used <= char_cursor_idx as usize,
+                    "should always be collapsing values"
+                );
+                self.sequences[used] = self.sequences[char_cursor_idx as usize];
+                used += 1;
+
+                match self.next_token[char_cursor_idx as usize] {
+                    None => break,
+                    Some(next_idx) => char_cursor_idx = next_idx.get(),
                 }
             }
         }
+
+        // then condense vector
+        self.sequences.resize(used, 0);
+        self.sequences
     }
 
     /// Update counts for the sequence_idx that was just recently added to this shard
@@ -372,6 +391,23 @@ impl<S: StatsCollector> SequenceShard<S> {
 impl SequenceShard<RealStatsCollector> {
     pub fn counts(&self) -> Vec<CountInfo> {
         self.stats_collector.counts()
+    }
+
+    #[tracing::instrument(skip(self), fields(pair, new_token))]
+    /// Merge all instances of `pair` together, replacing them with new_token
+    pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) {
+        let sequences_with_pair = self.stats_collector.sequences_with_pair(pair);
+        for sequence_index in sequences_with_pair {
+            let mut c = self.cursor_mut(sequence_index);
+            while !c.is_done() {
+                let c_pair = c.current_pair().expect("current_pair should be valid");
+                if c_pair == pair {
+                    c.merge_pair(new_token);
+                } else {
+                    c.next();
+                }
+            }
+        }
     }
 }
 
@@ -467,31 +503,8 @@ mod tests {
         s.push(&[3, 1, 1, 2], 2);
         s.merge_pair((1, 1), 4);
 
-        // now should look like [3, 4, 2]
-        let counts = s.counts();
-
-        let mut three_four_found = false;
-        let mut four_two_found = false;
-        assert_eq!(counts.len(), 2);
-
-        for count in counts {
-            if count.token_pair == (3, 4) {
-                assert_eq!(count.count, 2);
-                three_four_found = true;
-            } else if count.token_pair == (4, 2) {
-                assert_eq!(count.count, 2);
-                four_two_found = true;
-            } else {
-                assert!(
-                    false,
-                    "Unexpected token pair ({}, {})",
-                    count.token_pair.0, count.token_pair.1
-                );
-            }
-        }
-
-        assert!(three_four_found, "Didn't find (3,4) pair");
-        assert!(four_two_found, "Didn't find (4,2) pair");
+        let tokens = s.into_tokens();
+        assert_eq!(tokens, vec![3, 4, 2]);
     }
 
     #[test]
