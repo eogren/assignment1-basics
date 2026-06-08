@@ -3,14 +3,14 @@ static SIMPLE_CORPUS: &[u8] =
 
 use std::sync::{Arc, atomic::Ordering::Relaxed};
 
-use bpe_core::{ProgressInfo, tokenize};
+use bpe_core::{ProgressInfo, train_tokenizer};
 
 #[test]
 fn test_simple_corpus() {
     let special_tokens = vec!["<|endoftext|>".to_string()];
     let pi = Arc::new(ProgressInfo::default());
 
-    let r = tokenize(SIMPLE_CORPUS, 258, special_tokens, Some(pi.clone()));
+    let r = train_tokenizer(SIMPLE_CORPUS, 258, special_tokens, Some(pi.clone()));
     assert!(r.is_ok(), "should be able to tokenize");
     assert!(pi.tokenizer_merges_done.load(Relaxed) == 258);
 }

@@ -4,6 +4,6 @@ fn main() {
     println!("Tokenizing {}", path.to_str().unwrap_or_default());
 
     let tokens = vec!["|<endoftext>|".to_string()];
-    let r = bpe_core::tokenize_file(path, 10000, tokens, None);
+    let r = bpe_core::train_tokenizer_file(path, 10000, tokens, None);
     println!("{:?}", &r);
 }

@@ -24,7 +24,10 @@ fn split_regex(special_tokens: &[&str]) -> Regex {
 }
 
 /// Pretokenize a chunk of text and return its associated SequenceBuilder.
-pub(crate) fn pretokenize_chunk(chunk: &[u8], special_tokens: &[&str]) -> SequenceBuilder {
+pub(crate) fn pretokenize_chunk_for_training(
+    chunk: &[u8],
+    special_tokens: &[&str],
+) -> SequenceBuilder {
     // Step 1: Split and remove special tokens
     let split_re = split_regex(special_tokens);
     let chunk_str = std::str::from_utf8(chunk).expect("expect always utf8");
@@ -273,7 +276,7 @@ mod tests {
         let special_tokens = vec!["<|endoftext|>", "<|otherthing|>"];
         let s = "Hello world!<|endoftext|> <|otherthing|> Here are my tokens";
 
-        let builder = pretokenize_chunk(s.as_bytes(), &special_tokens);
+        let builder = pretokenize_chunk_for_training(s.as_bytes(), &special_tokens);
         let counts = builder.counts();
         assert_eq!(counts.len(), 8);
         assert!(counts.contains_key(b"!".as_slice()));
@@ -285,7 +288,7 @@ mod tests {
         let special_tokens = vec!["<|endoftext|>"];
         let s = "don't students think";
 
-        let builder = pretokenize_chunk(s.as_bytes(), &special_tokens);
+        let builder = pretokenize_chunk_for_training(s.as_bytes(), &special_tokens);
         let counts = builder.counts();
         assert_eq!(counts.len(), 4);
         assert!(counts.contains_key(b"don".as_slice()));

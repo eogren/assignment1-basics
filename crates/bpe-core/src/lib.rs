@@ -22,7 +22,7 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::{
-    pretok::{SequenceBuilder, pretokenize_chunk},
+    pretok::{SequenceBuilder, pretokenize_chunk_for_training},
     sequence::{CountInfo, RealStatsCollector, SequenceShard},
 };
 
@@ -54,17 +54,17 @@ pub struct ProgressInfo {
 }
 
 #[tracing::instrument(skip(progress_info))]
-pub fn tokenize_file(
+pub fn train_tokenizer_file(
     path: PathBuf,
     num_tokens: u32,
     special_tokens: Vec<String>,
     progress_info: Option<Arc<ProgressInfo>>,
 ) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
     let m = open_file(path)?;
-    tokenize(&m, num_tokens, special_tokens, progress_info)
+    train_tokenizer(&m, num_tokens, special_tokens, progress_info)
 }
 
-pub fn tokenize(
+pub fn train_tokenizer(
     buf: &[u8],
     num_tokens: u32,
     special_tokens: Vec<String>,
@@ -86,7 +86,7 @@ pub fn tokenize(
         );
     }
 
-    let chunks = pretokenize(buf, &special_tokens, progress_info.clone())?;
+    let chunks = pretokenize_for_training(buf, &special_tokens, progress_info.clone())?;
     if let Some(ref pi) = progress_info {
         pi.pretoken_unique_sequences.store(
             u32::try_from(chunks.counts().len()).expect("sequence count should fit in u32"),
@@ -191,7 +191,7 @@ fn generate_sequence_shards_with_stats(
 }
 
 #[tracing::instrument(skip(m, progress_info))]
-fn pretokenize(
+fn pretokenize_for_training(
     m: &[u8],
     special_tokens: &Vec<String>,
     progress_info: Option<Arc<ProgressInfo>>,
@@ -226,7 +226,7 @@ fn pretokenize(
                 {
                     None
                 } else {
-                    let ret = Some(pretokenize_chunk(chunk, &special_tokens_str));
+                    let ret = Some(pretokenize_chunk_for_training(chunk, &special_tokens_str));
                     if let Some(watchdog_pi) = &watchdog_stop_signal {
                         watchdog_pi.pretoken_done_shards.fetch_add(1, Relaxed);
                     }
@@ -333,14 +333,14 @@ mod tests {
 
     #[test]
     fn test_tokenize_err_on_invalid_file() {
-        let e = tokenize_file("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], None);
+        let e = train_tokenizer_file("/tmp".into(), 500, vec!["<|endoftext|>".to_string()], None);
         assert!(matches!(e, Err(BpeError::IoError(_))));
     }
 
     #[test]
     fn test_tokenize_no_tokens() {
         let file = tempfile::NamedTempFile::new().expect("failed to create file");
-        let e = tokenize_file(file.path().to_path_buf(), 500, vec![], None);
+        let e = train_tokenizer_file(file.path().to_path_buf(), 500, vec![], None);
         assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
 

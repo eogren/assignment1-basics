@@ -82,7 +82,7 @@ fn tokenize(
     let stop = Arc::new(AtomicBool::new(false));
 
     let ret = py.detach(move || {
-        bpe_core::tokenize_file(
+        bpe_core::train_tokenizer_file(
             path,
             vocab_size,
             special_tokens,
