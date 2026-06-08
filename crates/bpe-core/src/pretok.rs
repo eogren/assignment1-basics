@@ -2,7 +2,10 @@
 use std::sync::OnceLock;
 
 use fancy_regex::Regex;
+use itertools::Itertools;
 use rustc_hash::FxHashMap;
+
+use crate::sequence::{NoOpStatsCollector, SequenceShard};
 
 static GPT2_REGEX: OnceLock<Regex> = OnceLock::new();
 
@@ -21,6 +24,58 @@ fn split_regex(special_tokens: &[&str]) -> Regex {
         "|",
     );
     Regex::new(&re).expect("expected split_regex to compile")
+}
+
+pub(crate) fn pretokenize_chunk_for_encoding(
+    chunk: &[u8],
+    special_tokens: &[(&str, u32)],
+) -> SequenceShard<NoOpStatsCollector> {
+    let token_strs = special_tokens.iter().map(|i| i.0).collect_vec();
+    let split_re = split_regex(&token_strs);
+    let chunk_str = std::str::from_utf8(chunk).expect("expect always utf8");
+
+    let splits = split_re.find_iter(chunk_str);
+
+    let mut last_idx = 0;
+    let mut ret = SequenceShard::new(NoOpStatsCollector::default());
+    for split in splits.into_iter() {
+        let tok_match = split.expect("no error expected in regex");
+        let token_str = &chunk_str[tok_match.range()];
+
+        let token_idx = special_tokens
+            .iter()
+            .find(|item| item.0 == token_str)
+            .expect("expected to find match for token")
+            .1;
+
+        // Pretok everything before this and add to shard
+        let pre_tok_str = &chunk_str[last_idx..tok_match.start()];
+        preokenize_slice_for_encoding(&mut ret, pre_tok_str);
+
+        ret.push(&[token_idx], 1);
+        last_idx = tok_match.end();
+    }
+
+    if last_idx != chunk_str.len() {
+        let last_slice = &chunk_str[last_idx..chunk_str.len()];
+        preokenize_slice_for_encoding(&mut ret, last_slice);
+    }
+    ret
+}
+
+fn preokenize_slice_for_encoding(ret: &mut SequenceShard<NoOpStatsCollector>, pre_tok_str: &str) {
+    let gpt_reg = gpt_regex();
+    let tokens = gpt_reg.find_iter(pre_tok_str);
+    for token in tokens {
+        let tokenized = token
+            .expect("expected no error")
+            .as_str()
+            .as_bytes()
+            .iter()
+            .map(|b| *b as u32)
+            .collect_vec();
+        ret.push(&tokenized, 1);
+    }
 }
 
 /// Pretokenize a chunk of text and return its associated SequenceBuilder.
@@ -297,59 +352,29 @@ mod tests {
         assert!(counts.contains_key(b" think".as_slice()));
     }
 
-    /*
     #[test]
-    pub fn test_iterate_through_empty_sequence() {
-        let s = Sequences::new();
-        let iter = s.iter();
+    pub fn test_encoding_tokenizer_no_end_token() {
+        let special_tokens = vec![("<|endoftext|>", 257)];
+        let s = "don't students";
+        let expected_tokens = s.as_bytes().iter().map(|c| *c as u32).collect_vec();
 
-        assert_eq!(0, iter.count());
+        let builder = pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens);
+        let tokens = builder.into_tokens();
+        assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    pub fn test_insert_different_values() {
-        let mut s = Sequences::new();
-        s.append(b"Hello");
-        s.append(b"World");
+    pub fn test_encoding_tokenizer_with_end_token() {
+        let special_tokens = vec![("<|endoftext|>", 257)];
+        let s = "don't<|endoftext|>students";
+        let mut expected_tokens = b"don't".iter().map(|c| *c as u32).collect_vec();
+        expected_tokens.push(257);
+        b"students"
+            .iter()
+            .for_each(|c| expected_tokens.push(*c as u32));
 
-        let iter = s.iter();
-        assert_eq!(
-            iter.collect::<Vec<_>>(),
-            vec![
-                SequenceInfo {
-                    count: 1,
-                    sequence: b"Hello"
-                },
-                SequenceInfo {
-                    count: 1,
-                    sequence: b"World"
-                }
-            ]
-        );
+        let builder = pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens);
+        let tokens = builder.into_tokens();
+        assert_eq!(tokens, expected_tokens);
     }
-
-    #[test]
-    pub fn test_with_dupes() {
-        let mut s = Sequences::new();
-        s.append(b"Hello");
-        s.append(b"World");
-        s.append(b"Hello");
-
-        let iter = s.iter();
-        assert_eq!(
-            iter.collect::<Vec<_>>(),
-            vec![
-                SequenceInfo {
-                    count: 2,
-                    sequence: b"Hello"
-                },
-                SequenceInfo {
-                    count: 1,
-                    sequence: b"World"
-                }
-            ]
-        );
-    }
-
-    */
 }
