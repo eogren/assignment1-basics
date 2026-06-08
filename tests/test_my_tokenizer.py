@@ -1,3 +1,6 @@
+import cs336_basics.tokenizer
+import pytest
+
 from io import StringIO
 
 from cs336_basics.tokenizer import deserialize_merge, deserialize_vocab, serialize_merges, serialize_vocab
@@ -54,3 +57,21 @@ def test_merge_serde():
     rtt_merges = deserialize_merge(output_buf)
 
     assert orig_merges == rtt_merges
+
+
+def test_validate_vocab():
+    good_vocab = {1: b"foo"}
+    bad_vocab = {1: b"foo", 2: b"foo"}
+
+    cs336_basics.tokenizer._validate_vocab(good_vocab)
+    with pytest.raises(ValueError):
+        cs336_basics.tokenizer._validate_vocab(bad_vocab)
+
+
+def test_convert_merges():
+    vocab = {1: b"a", 2: b"b", 3: b"c", 4: "d", 5: b"ab", 6: b"abc"}
+    reverse_vocab = {v: k for k, v in vocab.items()}
+    merges = [(b"a", b"b"), (b"ab", b"c")]
+
+    token_merges = cs336_basics.tokenizer._convert_merges_to_tokens(reverse_vocab, merges)
+    assert token_merges == [(1, 2, 5), (5, 3, 6)]

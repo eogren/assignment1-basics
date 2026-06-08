@@ -23,7 +23,7 @@ use tracing::{debug, info};
 
 use crate::{
     pretok::{SequenceBuilder, pretokenize_chunk},
-    sequence::{CountInfo, SequenceShard},
+    sequence::{CountInfo, RealStatsCollector, SequenceShard},
 };
 
 mod pretok;
@@ -94,46 +94,30 @@ pub fn tokenize(
         );
     }
 
-    let mut shard = generate_sequence_shards(chunks);
+    let mut shard = generate_sequence_shards_with_stats(chunks);
 
     info!("Starting merge passes");
     while token_dict.len() < num_tokens as usize {
-        let counts = shard.counts();
-        let biggest_pair = counts.par_iter().reduce(
-            || &CountInfo {
-                token_pair: (0, 0),
-                count: 0,
-            },
-            |s1, s2| match s1.compare_to(s2, &token_dict) {
-                Greater => s1,
-                Less => s2,
-                _ => panic!("Unexpected result from comparing CountInfos"),
-            },
-        );
+        let biggest_pair = most_frequent_token(&token_dict, &shard);
 
         let new_token_id = u32::try_from(token_dict.len()).expect("tokens should fit in u32");
 
-        shard.merge_pair(biggest_pair.token_pair, new_token_id);
+        shard.merge_pair(biggest_pair, new_token_id);
 
-        let new_token = token_dict[&biggest_pair.token_pair.0]
+        let new_token = token_dict[&biggest_pair.0]
             .iter()
-            .chain(token_dict[&biggest_pair.token_pair.1].iter())
+            .chain(token_dict[&biggest_pair.1].iter())
             .copied()
             .collect_vec();
 
         let new_merge = (
-            token_dict[&biggest_pair.token_pair.0].clone(),
-            token_dict[&biggest_pair.token_pair.1].clone(),
+            token_dict[&biggest_pair.0].clone(),
+            token_dict[&biggest_pair.1].clone(),
         );
 
         debug!(
             "Merging ({}, {}) ('{:?}', '{:?}') into token {} ('{:?}')",
-            &biggest_pair.token_pair.0,
-            &biggest_pair.token_pair.1,
-            &new_merge.0,
-            &new_merge.1,
-            &new_token_id,
-            &new_token,
+            &biggest_pair.0, &biggest_pair.1, &new_merge.0, &new_merge.1, &new_token_id, &new_token,
         );
         merge_list.push(new_merge);
         assert_eq!(
@@ -145,8 +129,8 @@ pub fn tokenize(
         debug_assert!(
             merge_list
                 .iter()
-                .filter(|x| x.0 == token_dict[&biggest_pair.token_pair.0]
-                    && x.1 == token_dict[&biggest_pair.token_pair.1])
+                .filter(|x| x.0 == token_dict[&biggest_pair.0]
+                    && x.1 == token_dict[&biggest_pair.1])
                 .count()
                 == 1,
             "should never have dupes in merge list"
@@ -159,8 +143,29 @@ pub fn tokenize(
     Ok((token_dict, merge_list))
 }
 
+fn most_frequent_token(
+    token_dict: &HashMap<u32, Vec<u8>>,
+    shard: &SequenceShard<RealStatsCollector>,
+) -> (u32, u32) {
+    let counts = shard.counts();
+    let biggest_pair = counts.par_iter().reduce(
+        || &CountInfo {
+            token_pair: (0, 0),
+            count: 0,
+        },
+        |s1, s2| match s1.compare_to(s2, token_dict) {
+            Greater => s1,
+            Less => s2,
+            _ => panic!("Unexpected result from comparing CountInfos"),
+        },
+    );
+    biggest_pair.token_pair
+}
+
 #[tracing::instrument(skip(chunks))]
-fn generate_sequence_shards(chunks: SequenceBuilder) -> SequenceShard {
+fn generate_sequence_shards_with_stats(
+    chunks: SequenceBuilder,
+) -> SequenceShard<RealStatsCollector> {
     info!(
         "Generating pair sequences from {} unique sequences from corpus",
         chunks.counts().len()
@@ -169,7 +174,7 @@ fn generate_sequence_shards(chunks: SequenceBuilder) -> SequenceShard {
     let mut count = 0;
 
     // For now, one sequence chunk
-    let mut shard = SequenceShard::new();
+    let mut shard = SequenceShard::new(RealStatsCollector::default());
     for (k, v) in chunks.counts() {
         let tokens: Vec<u32> = k.iter().copied().map(u32::from).collect();
         shard.push(

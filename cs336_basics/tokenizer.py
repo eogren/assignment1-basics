@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 from typing import TYPE_CHECKING
 
@@ -97,11 +98,59 @@ def deserialize_merge(input: SupportsRead[str]) -> list[tuple[bytes, bytes]]:
     return ret
 
 
+def _validate_vocab(vocab: dict[int, bytes]):
+    """Check whether the vocab is valid. No bytes should appear twice in value."""
+    cnt = Counter()
+    for b in vocab.values():
+        cnt[b] += 1
+
+    most_common = cnt.most_common(n=1)[0]
+    if most_common[1] != 1:
+        raise ValueError("Vocab seems corrupt - {} appears more than once in values", most_common)
+
+
+def _validate_merges(merges: list[tuple[bytes, bytes]]):
+    cnt = Counter()
+    for first, second in merges:
+        cnt[first] += 1
+
+    most_common = cnt.most_common(n=1)[0]
+    if most_common[1] != 1:
+        raise ValueError("Merges seems corrupt - {} appears more than once as merge source", most_common)
+
+
+def _convert_merges_to_tokens(
+    reverse_vocab: dict[bytes, int], merges: list[tuple[bytes, bytes]]
+) -> list[tuple[int, int, int]]:
+    """We get merges as character pairs like "b", "e". But for the tokenizer it's easier if we get (2, 3) -> 5 type merges."""
+    token_merges = []
+    for merge in merges:
+        first_token = reverse_vocab[merge[0]]
+        second_token = reverse_vocab[merge[1]]
+        new_token = reverse_vocab[merge[0] + merge[1]]
+
+        token_merges.append((first_token, second_token, new_token))
+
+    return token_merges
+
+
 class Tokenizer:
+    _vocab: dict[int, bytes]
+    _merges: list[tuple[bytes, bytes]]
+    _token_merges: list[tuple[int, int, int]]
+    _special_tokens: list[str]
+
     def __init__(
         self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
     ):
-        pass
+        _validate_vocab(vocab)
+        self._vocab = vocab
+
+        _validate_merges(merges)
+        self._merges = merges
+
+        reverse_vocab = {v: k for k, v in vocab.items()}
+        self._token_merges = _convert_merges_to_tokens(reverse_vocab, merges)
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
