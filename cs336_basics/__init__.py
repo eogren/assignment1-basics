@@ -7,8 +7,8 @@ except importlib.metadata.PackageNotFoundError:
 
 from .activations import Swiglu
 from .linear import Linear
-from .embedding import Embedding
+from .embedding import Embedding, RoPE
 from .tokenizer import Tokenizer
 from .norms import RMSNorm
 
-__all__ = ["Embedding", "Linear", "RMSNorm", "Swiglu", "Tokenizer"]
+__all__ = ["Embedding", "Linear", "RoPE", "RMSNorm", "Swiglu", "Tokenizer"]
