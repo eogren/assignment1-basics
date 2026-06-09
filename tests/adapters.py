@@ -1,4 +1,5 @@
 from __future__ import annotations
+import cs336_basics
 
 import os
 from collections.abc import Iterable
@@ -8,9 +9,10 @@ import numpy.typing as npt
 import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
-import torch.nn as nn
 
 from cs336_basics import bpe_token, Embedding, Linear, RoPE, RMSNorm, Swiglu, Tokenizer
+import cs336_basics.funcs
+
 
 def run_linear(
     d_in: int,
@@ -31,9 +33,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     model = Linear(d_in, d_out)
-    my_dict = {
-        'weight': weights
-    }
+    my_dict = {"weight": weights}
     model.load_state_dict(my_dict)
 
     return model(in_features)
@@ -58,12 +58,11 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
     model = Embedding(vocab_size, d_model)
-    my_dict = {
-        'lookup': weights
-    }
+    my_dict = {"lookup": weights}
     model.load_state_dict(my_dict)
 
     return model(token_ids)
+
 
 def run_swiglu(
     d_model: int,
@@ -396,9 +395,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     model = RMSNorm(d_model, eps)
-    my_dict = {
-        'weight': weights
-    }
+    my_dict = {"weight": weights}
     model.load_state_dict(my_dict)
 
     return model(in_features)
@@ -454,7 +451,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    return cs336_basics.funcs.softmax(in_features, dim)
 
 
 def run_cross_entropy(
