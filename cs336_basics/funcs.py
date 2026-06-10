@@ -1,4 +1,7 @@
+import einops
 import torch
+
+from jaxtyping import Bool, Float
 
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
@@ -22,3 +25,23 @@ def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     ret = exponated / sums
 
     return ret
+
+
+def scaled_dot_product_attention(
+    Q: Float[torch.Tensor, " ... queries d_k"],
+    K: Float[torch.Tensor, " ... keys d_k"],
+    V: Float[torch.Tensor, " ... keys d_v"],
+    mask: Bool[torch.Tensor, " ... queries keys"] | None = None,
+) -> Float[torch.Tensor, " ... queries d_v"]:
+    d_k = Q.shape[-1]
+    pre_softmax = einops.einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") / (d_k**0.5)
+    # if mask is not None:
+    #    masks = torch.where(mask, 0.0, -torch.inf).to(dtype=pre_softmax.dtype)
+    # else:
+    #    masks = torch.zeros_like(pre_softmax)
+    if mask is not None:
+        pre_softmax.masked_fill_(~mask, -torch.inf)
+    # pre_softmax = pre_softmax + masks
+    post_softmax: Float[torch.Tensor, " ... queries keys"] = softmax(pre_softmax, -1)
+
+    return einops.einsum(post_softmax, V, "... queries keys, ... keys d_v -> ... queries d_v")
