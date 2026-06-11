@@ -6,9 +6,10 @@ except importlib.metadata.PackageNotFoundError:
     pass
 
 from .activations import Swiglu
+from .attention import MultiheadSelfAttention
 from .linear import Linear
 from .embedding import Embedding, RoPE
 from .tokenizer import Tokenizer
 from .norms import RMSNorm
 
-__all__ = ["Embedding", "Linear", "RoPE", "RMSNorm", "Swiglu", "Tokenizer"]
+__all__ = ["Embedding", "Linear", "MultiheadSelfAttention", "RoPE", "RMSNorm", "Swiglu", "Tokenizer"]

@@ -30,7 +30,7 @@ class RoPE(nn.Module):
 
         i = torch.arange(max_seq_len).reshape(max_seq_len, 1)
         k = (2 * torch.arange(start=1, end=1 + (d_k // 2)) - 2) / d_k
-        theta_scalar = torch.tensor(theta)
+        theta_scalar = torch.tensor(theta, device=device, dtype=torch.float32)
         theta_tensor = torch.pow(theta_scalar, k)
         thetas = i / theta_tensor
 

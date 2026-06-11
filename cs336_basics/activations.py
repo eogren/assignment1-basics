@@ -1,6 +1,7 @@
-from .linear import Linear
 import torch
 import torch.nn as nn
+
+from .linear import Linear
 
 
 def _round_nearest_64(n: float) -> int:

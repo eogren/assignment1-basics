@@ -1,5 +1,4 @@
 from __future__ import annotations
-import cs336_basics
 
 import os
 from collections.abc import Iterable
@@ -10,8 +9,9 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
-from cs336_basics import bpe_token, Embedding, Linear, RoPE, RMSNorm, Swiglu, Tokenizer
+import cs336_basics
 import cs336_basics.funcs
+from cs336_basics import Embedding, Linear, MultiheadSelfAttention, RMSNorm, RoPE, Swiglu, Tokenizer, bpe_token
 
 
 def run_linear(
@@ -153,7 +153,13 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    model = MultiheadSelfAttention(d_model=d_model, num_heads=num_heads)
+    model.w_q.weight.data = q_proj_weight
+    model.w_k.weight.data = k_proj_weight
+    model.w_v.weight.data = v_proj_weight
+    model.w_o.weight.data = o_proj_weight
+
+    return model(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -193,7 +199,13 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    model = MultiheadSelfAttention(d_model=d_model, num_heads=num_heads, max_seq_len=max_seq_len, theta=theta)
+    model.w_q.weight.data = q_proj_weight
+    model.w_k.weight.data = k_proj_weight
+    model.w_v.weight.data = v_proj_weight
+    model.w_o.weight.data = o_proj_weight
+
+    return model(in_features, token_positions)
 
 
 def run_rope(
