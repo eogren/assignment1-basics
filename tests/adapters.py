@@ -11,7 +11,17 @@ from torch import Tensor
 
 import cs336_basics
 import cs336_basics.funcs
-from cs336_basics import Embedding, Linear, MultiheadSelfAttention, RMSNorm, RoPE, Swiglu, Tokenizer, bpe_token
+from cs336_basics import (
+    Embedding,
+    Linear,
+    MultiheadSelfAttention,
+    RMSNorm,
+    RoPE,
+    Swiglu,
+    Tokenizer,
+    TransformerBlock,
+    bpe_token,
+)
 
 
 def run_linear(
@@ -154,10 +164,10 @@ def run_multihead_self_attention(
         implementation with the given QKV projection weights and input features.
     """
     model = MultiheadSelfAttention(d_model=d_model, num_heads=num_heads)
-    model.w_q.weight.data = q_proj_weight
-    model.w_k.weight.data = k_proj_weight
-    model.w_v.weight.data = v_proj_weight
-    model.w_o.weight.data = o_proj_weight
+    model.q_proj.weight.data = q_proj_weight
+    model.k_proj.weight.data = k_proj_weight
+    model.v_proj.weight.data = v_proj_weight
+    model.output_proj.weight.data = o_proj_weight
 
     return model(in_features)
 
@@ -200,10 +210,10 @@ def run_multihead_self_attention_with_rope(
         implementation with the given QKV projection weights and input features.
     """
     model = MultiheadSelfAttention(d_model=d_model, num_heads=num_heads, max_seq_len=max_seq_len, theta=theta)
-    model.w_q.weight.data = q_proj_weight
-    model.w_k.weight.data = k_proj_weight
-    model.w_v.weight.data = v_proj_weight
-    model.w_o.weight.data = o_proj_weight
+    model.q_proj.weight.data = q_proj_weight
+    model.k_proj.weight.data = k_proj_weight
+    model.v_proj.weight.data = v_proj_weight
+    model.output_proj.weight.data = o_proj_weight
 
     return model(in_features, token_positions)
 
@@ -301,7 +311,10 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    model = TransformerBlock(d_model=d_model, num_heads=num_heads, d_ff=d_ff, max_seq_len=max_seq_len, theta=theta)
+
+    model.load_state_dict(weights)
+    return model(in_features)
 
 
 def run_transformer_lm(

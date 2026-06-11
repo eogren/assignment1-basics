@@ -11,5 +11,15 @@ from .embedding import Embedding, RoPE
 from .linear import Linear
 from .norms import RMSNorm
 from .tokenizer import Tokenizer
+from .transformer import TransformerBlock
 
-__all__ = ["Embedding", "Linear", "MultiheadSelfAttention", "RMSNorm", "RoPE", "Swiglu", "Tokenizer"]
+__all__ = [
+    "Embedding",
+    "Linear",
+    "MultiheadSelfAttention",
+    "RMSNorm",
+    "RoPE",
+    "Swiglu",
+    "Tokenizer",
+    "TransformerBlock",
+]

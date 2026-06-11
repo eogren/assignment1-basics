@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections import Counter
 import json
+from collections import Counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from _typeshed import SupportsRead, SupportsWrite
 from collections.abc import Iterable, Iterator
-
 
 _SAFE_RANGES = [range(0x21, 0x7F), range(0xA1, 0xAD), range(0xAE, 0x100)]
 

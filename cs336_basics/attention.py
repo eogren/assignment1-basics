@@ -38,10 +38,10 @@ class MultiheadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.d_k = d_k
 
-        self.w_q = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
-        self.w_k = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
-        self.w_v = Linear(out_features=num_heads * d_v, in_features=d_model, device=device, dtype=dtype)
-        self.w_o = Linear(out_features=d_model, in_features=num_heads * d_v, device=device, dtype=dtype)
+        self.q_proj = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
+        self.k_proj = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
+        self.v_proj = Linear(out_features=num_heads * d_v, in_features=d_model, device=device, dtype=dtype)
+        self.output_proj = Linear(out_features=d_model, in_features=num_heads * d_v, device=device, dtype=dtype)
         if theta:
             assert max_seq_len is not None, "max_seq_len must be set if theta is set"
             self.rope = RoPE(theta=theta, d_k=self.d_k, max_seq_len=max_seq_len, device=device)
@@ -55,9 +55,9 @@ class MultiheadSelfAttention(nn.Module):
     ) -> Float[torch.Tensor, " ... sequence_length d_model"]:
         seq_len = x.shape[-2]
 
-        proj_q = self.w_q(x)
-        proj_k = self.w_k(x)
-        proj_v = self.w_v(x)
+        proj_q = self.q_proj(x)
+        proj_k = self.k_proj(x)
+        proj_v = self.v_proj(x)
 
         # Reshape for heads
         proj_q = einops.rearrange(
@@ -91,5 +91,5 @@ class MultiheadSelfAttention(nn.Module):
             multihead, "... num_heads sequence_length dk -> ... sequence_length (num_heads dk)"
         )
 
-        ret = self.w_o(multihead)
+        ret = self.output_proj(multihead)
         return ret
