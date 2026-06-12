@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from _typeshed import SupportsRead, SupportsWrite
 from collections.abc import Iterable, Iterator
 
+from cs336_basics import bpe_token
+
 _SAFE_RANGES = [range(0x21, 0x7F), range(0xA1, 0xAD), range(0xAE, 0x100)]
 
 
@@ -127,7 +129,7 @@ class Tokenizer:
     _vocab: dict[int, bytes]
     _merges: list[tuple[bytes, bytes]]
     _token_merges: list[tuple[int, int, int]]
-    _special_tokens: list[str]
+    _special_tokens: list[tuple[str, int]]
 
     def __init__(
         self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
@@ -137,8 +139,12 @@ class Tokenizer:
 
         self._merges = merges
 
+        if special_tokens is None:
+            special_tokens = []
+
         reverse_vocab = {v: k for k, v in vocab.items()}
         self._token_merges = _convert_merges_to_tokens(reverse_vocab, merges)
+        self._special_tokens = [(token, reverse_vocab[token.encode("utf-8")]) for token in special_tokens]
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
@@ -154,10 +160,16 @@ class Tokenizer:
         Tokenizer(vocab, merges, special_tokens)
 
     def encode(self, text: str) -> list[int]:
-        pass
+        return bpe_token.encode_str(text, self._vocab, self._token_merges, self._special_tokens)
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        pass
+        for s in iterable:
+            ret = self.encode(s)
+            yield from ret
 
     def decode(self, ids: list[int]) -> str:
-        pass
+        ret = bytearray()
+        for token in ids:
+            ret.extend(self._vocab[token])
+
+        return ret.decode("utf-8")

@@ -5,7 +5,7 @@ use fancy_regex::Regex;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
-use crate::sequence::{NoOpStatsCollector, SequenceShard};
+use crate::sequence::{RealStatsCollector, SequenceShard, StatsCollector};
 
 static GPT2_REGEX: OnceLock<Regex> = OnceLock::new();
 
@@ -29,7 +29,9 @@ fn split_regex(special_tokens: &[&str]) -> Regex {
 pub(crate) fn pretokenize_chunk_for_encoding(
     chunk: &[u8],
     special_tokens: &[(&str, u32)],
-) -> SequenceShard<NoOpStatsCollector> {
+    // reverse_vocab is a slice [0-255] that indexes a byte into its token.
+    reverse_vocab: &[Option<u32>],
+) -> SequenceShard<RealStatsCollector> {
     let token_strs = special_tokens.iter().map(|i| i.0).collect_vec();
     let split_re = split_regex(&token_strs);
     let chunk_str = std::str::from_utf8(chunk).expect("expect always utf8");
@@ -37,11 +39,13 @@ pub(crate) fn pretokenize_chunk_for_encoding(
     let splits = split_re.find_iter(chunk_str);
 
     let mut last_idx = 0;
-    let mut ret = SequenceShard::new(NoOpStatsCollector::default());
+    let mut ret = SequenceShard::new(RealStatsCollector::default());
     for split in splits.into_iter() {
         let tok_match = split.expect("no error expected in regex");
         let token_str = &chunk_str[tok_match.range()];
-
+        if token_str.is_empty() {
+            continue;
+        }
         let token_idx = special_tokens
             .iter()
             .find(|item| item.0 == token_str)
@@ -50,7 +54,7 @@ pub(crate) fn pretokenize_chunk_for_encoding(
 
         // Pretok everything before this and add to shard
         let pre_tok_str = &chunk_str[last_idx..tok_match.start()];
-        preokenize_slice_for_encoding(&mut ret, pre_tok_str);
+        preokenize_slice_for_encoding(&mut ret, pre_tok_str, reverse_vocab);
 
         ret.push(&[token_idx], 1);
         last_idx = tok_match.end();
@@ -58,12 +62,18 @@ pub(crate) fn pretokenize_chunk_for_encoding(
 
     if last_idx != chunk_str.len() {
         let last_slice = &chunk_str[last_idx..chunk_str.len()];
-        preokenize_slice_for_encoding(&mut ret, last_slice);
+        preokenize_slice_for_encoding(&mut ret, last_slice, reverse_vocab);
     }
     ret
 }
 
-fn preokenize_slice_for_encoding(ret: &mut SequenceShard<NoOpStatsCollector>, pre_tok_str: &str) {
+fn preokenize_slice_for_encoding<S>(
+    ret: &mut SequenceShard<S>,
+    pre_tok_str: &str,
+    reverse_vocab: &[Option<u32>],
+) where
+    S: StatsCollector,
+{
     let gpt_reg = gpt_regex();
     let tokens = gpt_reg.find_iter(pre_tok_str);
     for token in tokens {
@@ -72,7 +82,7 @@ fn preokenize_slice_for_encoding(ret: &mut SequenceShard<NoOpStatsCollector>, pr
             .as_str()
             .as_bytes()
             .iter()
-            .map(|b| *b as u32)
+            .map(|b| reverse_vocab[*b as usize].expect("should have a token for char"))
             .collect_vec();
         ret.push(&tokenized, 1);
     }
@@ -352,13 +362,24 @@ mod tests {
         assert!(counts.contains_key(b" think".as_slice()));
     }
 
+    static DEFAULT_REVERSE_VOCAB: OnceLock<[Option<u32>; 256]> = OnceLock::new();
+    fn reverse_vocab() -> &'static [Option<u32>] {
+        return DEFAULT_REVERSE_VOCAB.get_or_init(|| {
+            let ret: [Option<u32>; 256] =
+                std::array::from_fn(|i| Some(u32::try_from(i).expect("u32 should fit")));
+
+            ret
+        });
+    }
+
     #[test]
     pub fn test_encoding_tokenizer_no_end_token() {
         let special_tokens = vec![("<|endoftext|>", 257)];
         let s = "don't students";
         let expected_tokens = s.as_bytes().iter().map(|c| *c as u32).collect_vec();
 
-        let builder = pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens);
+        let builder =
+            pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens, reverse_vocab());
         let tokens = builder.into_tokens();
         assert_eq!(tokens, expected_tokens);
     }
@@ -373,7 +394,8 @@ mod tests {
             .iter()
             .for_each(|c| expected_tokens.push(*c as u32));
 
-        let builder = pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens);
+        let builder =
+            pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens, reverse_vocab());
         let tokens = builder.into_tokens();
         assert_eq!(tokens, expected_tokens);
     }

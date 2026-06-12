@@ -395,19 +395,24 @@ impl SequenceShard<RealStatsCollector> {
 
     #[tracing::instrument(skip(self), fields(pair, new_token))]
     /// Merge all instances of `pair` together, replacing them with new_token
-    pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) {
+    /// Returns 'true' if any matching pairs exist in this shard.
+    pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) -> bool {
         let sequences_with_pair = self.stats_collector.sequences_with_pair(pair);
+        let mut merged = false;
         for sequence_index in sequences_with_pair {
             let mut c = self.cursor_mut(sequence_index);
             while !c.is_done() {
                 let c_pair = c.current_pair().expect("current_pair should be valid");
                 if c_pair == pair {
                     c.merge_pair(new_token);
+                    merged = true;
                 } else {
                     c.next();
                 }
             }
         }
+
+        merged
     }
 }
 

@@ -1,5 +1,5 @@
 use bpe_core::BpeError::{SpecialTokensRequired, VocabTooSmall};
-use bpe_core::ProgressInfo;
+use bpe_core::{encode, ProgressInfo};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -68,6 +68,30 @@ impl ProgressHandler {
 }
 
 #[pyfunction]
+fn encode_str(
+    s: &str,
+    vocab: HashMap<u32, Vec<u8>>,
+    merges: Vec<(u32, u32, u32)>,
+    special_tokens: Vec<(String, u32)>,
+) -> PyResult<Vec<u32>> {
+    let mut reverse_vocab: [Option<u32>; 256] = [None; 256];
+    for items in vocab.iter() {
+        if items.1.len() == 1 {
+            reverse_vocab[*items.1.first().unwrap() as usize] = Some(*items.0);
+        }
+    }
+
+    let special_token_ptrs = special_tokens.iter().map(|i| (i.0.as_str(), i.1)).collect();
+
+    Ok(encode(
+        s.as_bytes(),
+        &merges,
+        special_token_ptrs,
+        &reverse_vocab,
+    ))
+}
+
+#[pyfunction]
 #[pyo3(signature = (path, vocab_size, special_tokens, progress_handler = None))]
 fn tokenize(
     py: Python<'_>,
@@ -102,6 +126,7 @@ fn tokenize(
 #[pymodule]
 fn bpe_token(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_str, m)?)?;
     m.add_class::<Progress>()?;
     m.add_class::<ProgressHandler>()?;
     Ok(())

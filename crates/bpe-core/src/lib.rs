@@ -22,7 +22,7 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 use crate::{
-    pretok::{SequenceBuilder, pretokenize_chunk_for_training},
+    pretok::{SequenceBuilder, pretokenize_chunk_for_encoding, pretokenize_chunk_for_training},
     sequence::{CountInfo, RealStatsCollector, SequenceShard},
 };
 
@@ -62,6 +62,30 @@ pub fn train_tokenizer_file(
 ) -> Result<(HashMap<u32, Vec<u8>>, Vec<(Vec<u8>, Vec<u8>)>), BpeError> {
     let m = open_file(path)?;
     train_tokenizer(&m, num_tokens, special_tokens, progress_info)
+}
+
+pub fn encode(
+    buf: &[u8],
+    merges: &Vec<(u32, u32, u32)>,
+    special_tokens: Vec<(&str, u32)>,
+    reverse_vocab: &[Option<u32>],
+) -> Vec<u32> {
+    let mut shard = pretokenize_chunk_for_encoding(buf, &special_tokens, reverse_vocab);
+    loop {
+        let mut merge_found = false;
+        for merge in merges {
+            if shard.merge_pair((merge.0, merge.1), merge.2) {
+                // if we found any matches, restart the loop
+                merge_found = true;
+                break;
+            }
+        }
+
+        if !merge_found {
+            break;
+        }
+    }
+    shard.into_tokens()
 }
 
 pub fn train_tokenizer(
@@ -316,6 +340,8 @@ fn starting_token_dict(tokens: &Vec<String>) -> HashMap<u32, Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::rev;
+
     use super::*;
 
     const SEP: &[u8] = b" ";
@@ -344,5 +370,20 @@ mod tests {
         assert!(matches!(e, Err(BpeError::SpecialTokensRequired)));
     }
 
+    #[test]
+    fn test_encode() {
+        let merges = vec![(5, 4, 6), (0, 2, 7), (0, 1, 8), (6, 3, 9), (8, 5, 10)];
+        let special_tokens = Vec::new();
+        let mut reverse_vocab = [None; 256];
+        reverse_vocab[b' ' as usize] = Some(0);
+        reverse_vocab[b'a' as usize] = Some(1);
+        reverse_vocab[b'c' as usize] = Some(2);
+        reverse_vocab[b'e' as usize] = Some(3);
+        reverse_vocab[b'h' as usize] = Some(4);
+        reverse_vocab[b't' as usize] = Some(5);
+
+        let tokens = encode(b"the cat ate", &merges, special_tokens, &reverse_vocab);
+        assert_eq!(tokens, vec![9, 7, 1, 5, 10, 3]);
+    }
     // todo check progress
 }
