@@ -22,6 +22,7 @@ from cs336_basics import (
     TransformerBlock,
     bpe_token,
 )
+from cs336_basics.transformer import TransformerLM
 
 
 def run_linear(
@@ -396,7 +397,18 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    model = TransformerLM(
+        vocab_size=vocab_size,
+        num_transformer_layers=num_layers,
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        max_seq_len=context_length,
+        theta=rope_theta,
+    )
+    model.load_state_dict(weights)
+
+    return model(in_indices)
 
 
 def run_rmsnorm(

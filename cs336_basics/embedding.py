@@ -11,12 +11,12 @@ class Embedding(nn.Module):
         dtype: torch.dtype | None = None  Data type of the parameters"""
         super().__init__()
 
-        self.lookup = nn.Parameter(torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype))
-        nn.init.trunc_normal_(self.lookup, 0, 1, -3, 3)
+        self.weight = nn.Parameter(torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype))
+        nn.init.trunc_normal_(self.weight, 0, 1, -3, 3)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         """Take token_ids of shape (batch_size, sequence_length)"""
-        return self.lookup[token_ids]
+        return self.weight[token_ids]
 
 
 class RoPE(nn.Module):
