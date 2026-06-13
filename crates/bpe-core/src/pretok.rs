@@ -17,10 +17,15 @@ fn gpt_regex() -> &'static Regex {
 }
 
 fn split_regex(special_tokens: &[&str]) -> Regex {
+    // Put the longest tokens first so rust's engine will match them. (eg if aa and a are both special tokens,
+    // we want to match aa when possible)
+    let mut indices: Vec<usize> = (0..special_tokens.len()).collect();
+    indices.sort_by(|&a, &b| special_tokens[b].cmp(&special_tokens[a]));
+
     let re = itertools::join(
-        special_tokens
-            .iter()
-            .map(|token| fancy_regex::escape(token)),
+        indices
+            .into_iter()
+            .map(|i| fancy_regex::escape(special_tokens[i])),
         "|",
     );
     Regex::new(&re).expect("expected split_regex to compile")
@@ -302,6 +307,22 @@ mod tests {
         let builder =
             pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens, reverse_vocab());
         let tokens = builder.into_tokens();
+        assert_eq!(tokens, expected_tokens);
+    }
+
+    #[test]
+    pub fn test_encoding_tokenizer_with_double_token() {
+        let special_tokens = vec![("<|endoftext|>", 257), ("<|endoftext|><|endoftext|>", 258)];
+        let s = "don't students<|endoftext|><|endoftext|>";
+        let mut expected_tokens = b"don't".iter().map(|c| *c as u32).collect_vec();
+        b" students"
+            .iter()
+            .for_each(|c| expected_tokens.push(*c as u32));
+
+        let builder =
+            pretokenize_chunk_for_encoding(s.as_bytes(), &special_tokens, reverse_vocab());
+        let tokens = builder.into_tokens();
+        expected_tokens.push(258);
         assert_eq!(tokens, expected_tokens);
     }
 
