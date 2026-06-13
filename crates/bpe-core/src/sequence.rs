@@ -1,16 +1,10 @@
-use std::{collections::HashMap, num::NonZeroU32};
+use std::num::NonZeroU32;
+
+#[cfg(test)]
+use std::collections::HashMap;
 
 use itertools::Itertools;
-use rustc_hash::FxHashMap;
-
-pub(crate) trait StatsCollector {
-    /// Update the duplicate count for the given sequence index to `dup_count`.
-    fn update_duplicate_count(&mut self, sequence_idx: usize, dup_count: u32);
-
-    /// Adjust sequence_idx's count of the given pair by delta. If the stats collector
-    /// hasn't tracked any thing for this pair yet, we assume it has a count of 0.
-    fn update_pair_count(&mut self, sequence_idx: usize, pair: (u32, u32), delta: i32);
-}
+use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug, Default)]
 pub(crate) struct RealStatsCollector {
@@ -20,9 +14,19 @@ pub(crate) struct RealStatsCollector {
 
     /// cache of count of pairs. maps (token, token) -> map of {sequence_idx -> count}
     count_index: FxHashMap<(u32, u32), FxHashMap<usize, u32>>,
+
+    /// running dup-weighted total occurrences for each pair. this is the same
+    /// value counts() computes lazily, maintained incrementally so the hot path
+    /// never has to rebuild it.
+    pair_totals: FxHashMap<(u32, u32), i64>,
+
+    /// pairs whose total changed since the last drain_dirty(). lets the training
+    /// loop re-push only the handful of pairs a merge actually touched.
+    dirty: FxHashSet<(u32, u32)>,
 }
 
-impl StatsCollector for RealStatsCollector {
+impl RealStatsCollector {
+    /// Update the duplicate count for the given sequence index to `dup_count`.
     fn update_duplicate_count(&mut self, sequence_idx: usize, dup_count: u32) {
         let seq_idx = u32::try_from(sequence_idx).expect("sequence_idx should fit in u32");
 
@@ -32,7 +36,22 @@ impl StatsCollector for RealStatsCollector {
             .or_insert(dup_count);
     }
 
+    /// Adjust sequence_idx's count of the given pair by delta. If we haven't
+    /// tracked anything for this pair yet, we assume it has a count of 0.
     fn update_pair_count(&mut self, sequence_idx: usize, pair: (u32, u32), delta: i32) {
+        // Maintain the dup-weighted aggregate alongside the per-sequence index.
+        // duplicates is always populated before pair counts (push() sets it
+        // before walking the sequence), so the weight is available here.
+        let seq_idx = u32::try_from(sequence_idx).expect("sequence_idx should fit in u32");
+        let weight = i64::from(
+            *self
+                .duplicates
+                .get(&seq_idx)
+                .expect("duplicate count must be set before pair counts"),
+        );
+        *self.pair_totals.entry(pair).or_insert(0) += i64::from(delta) * weight;
+        self.dirty.insert(pair);
+
         let counts = self.count_index.get_mut(&pair);
 
         if counts.is_none() {
@@ -73,6 +92,28 @@ impl RealStatsCollector {
             .unwrap_or_default()
     }
 
+    /// Current dup-weighted total occurrences of `pair`. Used by the heap's
+    /// lazy-deletion check to tell whether a popped entry is still current.
+    pub fn pair_total(&self, pair: (u32, u32)) -> i64 {
+        self.pair_totals.get(&pair).copied().unwrap_or(0)
+    }
+
+    /// Pairs touched since the last call, paired with their current totals.
+    /// Clears the dirty set.
+    pub fn drain_dirty(&mut self) -> Vec<((u32, u32), i64)> {
+        let drained: Vec<(u32, u32)> = self.dirty.drain().collect();
+        drained
+            .into_iter()
+            .map(|pair| {
+                let total = self.pair_totals.get(&pair).copied().unwrap_or(0);
+                (pair, total)
+            })
+            .collect()
+    }
+
+    /// Eagerly rebuild every pair's dup-weighted count. Superseded on the hot
+    /// path by the incremental `pair_totals`; retained for test inspection.
+    #[cfg(test)]
     pub fn counts(&self) -> Vec<CountInfo> {
         let mut ret = Vec::new();
 
@@ -99,19 +140,10 @@ impl RealStatsCollector {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct NoOpStatsCollector {}
-
-impl StatsCollector for NoOpStatsCollector {
-    fn update_duplicate_count(&mut self, _sequence_idx: usize, _dup_count: u32) {}
-
-    fn update_pair_count(&mut self, _sequence_idx: usize, _pair: (u32, u32), _delta: i32) {}
-}
-
 /// SequenceShard keeps track of a set of token sequences
 /// and handles the logic around merging sequences together.
 #[derive(Debug, Default)]
-pub(crate) struct SequenceShard<S: StatsCollector> {
+pub(crate) struct SequenceShard {
     /// raw data for all the sequences. this will eventually
     /// be manipulated when merges occur.
     sequences: Vec<u32>,
@@ -125,13 +157,13 @@ pub(crate) struct SequenceShard<S: StatsCollector> {
     start_index: Vec<u32>,
 
     /// stats collector
-    stats_collector: S,
+    stats_collector: RealStatsCollector,
 }
 
 /// Iterate through pairs in a single sequence
 #[derive(Debug)]
-pub(crate) struct SequenceCursor<'a, S: StatsCollector> {
-    shard: &'a mut SequenceShard<S>,
+pub(crate) struct SequenceCursor<'a> {
+    shard: &'a mut SequenceShard,
 
     /// which sequence in the shard is this
     sequence_idx: usize,
@@ -140,8 +172,8 @@ pub(crate) struct SequenceCursor<'a, S: StatsCollector> {
     idx_before_pair: Option<usize>,
 }
 
-impl<'a, S: StatsCollector> SequenceCursor<'a, S> {
-    pub fn new(shard: &mut SequenceShard<S>, sequence_idx: usize) -> SequenceCursor<'_, S> {
+impl<'a> SequenceCursor<'a> {
+    pub fn new(shard: &mut SequenceShard, sequence_idx: usize) -> SequenceCursor<'_> {
         debug_assert!(
             shard.sequences.len() > sequence_idx,
             "sequence_idx not present in shard"
@@ -258,12 +290,14 @@ impl<'a, S: StatsCollector> SequenceCursor<'a, S> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 pub(crate) struct CountInfo {
     pub token_pair: (u32, u32),
     pub count: u32,
 }
 
+#[cfg(test)]
 impl CountInfo {
     pub fn compare_to(
         &self,
@@ -294,13 +328,13 @@ impl CountInfo {
     }
 }
 
-impl<S: StatsCollector> SequenceShard<S> {
-    pub fn new(stats: S) -> Self {
+impl SequenceShard {
+    pub fn new() -> Self {
         Self {
             sequences: Vec::new(),
             next_token: Vec::new(),
             start_index: Vec::new(),
-            stats_collector: stats,
+            stats_collector: RealStatsCollector::default(),
         }
     }
 
@@ -344,7 +378,7 @@ impl<S: StatsCollector> SequenceShard<S> {
     }
 
     /// Return a cursor over a specific sequence in this shard
-    pub fn cursor_mut(&mut self, sequence_idx: usize) -> SequenceCursor<'_, S> {
+    pub fn cursor_mut(&mut self, sequence_idx: usize) -> SequenceCursor<'_> {
         SequenceCursor::new(self, sequence_idx)
     }
 
@@ -388,9 +422,20 @@ impl<S: StatsCollector> SequenceShard<S> {
     }
 }
 
-impl SequenceShard<RealStatsCollector> {
+impl SequenceShard {
+    #[cfg(test)]
     pub fn counts(&self) -> Vec<CountInfo> {
         self.stats_collector.counts()
+    }
+
+    /// Current dup-weighted total occurrences of `pair`.
+    pub fn pair_total(&self, pair: (u32, u32)) -> i64 {
+        self.stats_collector.pair_total(pair)
+    }
+
+    /// Pairs whose totals changed since the last drain, with their new totals.
+    pub fn drain_dirty(&mut self) -> Vec<((u32, u32), i64)> {
+        self.stats_collector.drain_dirty()
     }
 
     #[tracing::instrument(skip(self), fields(pair, new_token))]
@@ -424,7 +469,7 @@ mod tests {
 
     #[test]
     pub fn test_basic_add() {
-        let mut s = SequenceShard::new(RealStatsCollector::default());
+        let mut s = SequenceShard::new();
 
         s.push(&[1, 1, 1, 1], 2);
         let counts = s.counts();
@@ -440,7 +485,7 @@ mod tests {
     }
 
     /// Dump all pairs in a SequenceCursor
-    fn to_pairs<S: StatsCollector>(c: &mut SequenceCursor<S>) -> Vec<(u32, u32)> {
+    fn to_pairs(c: &mut SequenceCursor) -> Vec<(u32, u32)> {
         let mut ret = Vec::new();
 
         while !c.is_done() {
@@ -453,7 +498,7 @@ mod tests {
 
     #[test]
     pub fn test_cursor_pair() {
-        let mut s = SequenceShard::new(RealStatsCollector::default());
+        let mut s = SequenceShard::new();
 
         s.push(&[1, 1, 2, 3], 2);
 
@@ -463,7 +508,7 @@ mod tests {
 
     #[test]
     pub fn test_two_sequences() {
-        let mut s = SequenceShard::new(RealStatsCollector::default());
+        let mut s = SequenceShard::new();
 
         s.push(&[3, 1, 1, 2], 2);
         s.push(&[4, 1, 1, 5], 1);
@@ -503,7 +548,7 @@ mod tests {
 
     #[test]
     pub fn test_merge_simpler() {
-        let mut s = SequenceShard::new(RealStatsCollector::default());
+        let mut s = SequenceShard::new();
 
         s.push(&[3, 1, 1, 2], 2);
         s.merge_pair((1, 1), 4);
@@ -514,7 +559,7 @@ mod tests {
 
     #[test]
     pub fn test_merge_runs() {
-        let mut s = SequenceShard::new(RealStatsCollector::default());
+        let mut s = SequenceShard::new();
 
         s.push(&[1, 1, 1, 1, 1], 2);
 

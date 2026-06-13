@@ -1,9 +1,6 @@
 use std::{
-    cmp::{
-        Ordering::{Greater, Less},
-        min,
-    },
-    collections::HashMap,
+    cmp::min,
+    collections::{BinaryHeap, HashMap},
     fmt::Debug,
     fs::File,
     io::{Error, ErrorKind},
@@ -23,7 +20,7 @@ use tracing::{debug, info};
 
 use crate::{
     pretok::{SequenceBuilder, pretokenize_chunk_for_encoding, pretokenize_chunk_for_training},
-    sequence::{CountInfo, RealStatsCollector, SequenceShard},
+    sequence::SequenceShard,
 };
 
 mod pretok;
@@ -120,13 +117,22 @@ pub fn train_tokenizer(
 
     let mut shard = generate_sequence_shards_with_stats(chunks);
 
+    // Seed the heap from the initial pair totals. Every pair touched during the
+    // pushes is sitting in the dirty set, so draining it gives the full seed
+    // without rebuilding counts.
+    let mut heap = BinaryHeap::new();
+    for (pair, count) in shard.drain_dirty() {
+        push_pair(&mut heap, pair, count, &token_dict);
+    }
+
     info!("Starting merge passes");
     while token_dict.len() < num_tokens as usize {
-        let biggest_pair = most_frequent_token(&token_dict, &shard);
+        let Some(biggest_pair) = pop_max(&mut heap, &shard) else {
+            // No positive-count pairs remain; nothing left to merge.
+            break;
+        };
 
         let new_token_id = u32::try_from(token_dict.len()).expect("tokens should fit in u32");
-
-        shard.merge_pair(biggest_pair, new_token_id);
 
         let new_token = token_dict[&biggest_pair.0]
             .iter()
@@ -144,21 +150,20 @@ pub fn train_tokenizer(
             &biggest_pair.0, &biggest_pair.1, &new_merge.0, &new_merge.1, &new_token_id, &new_token,
         );
         merge_list.push(new_merge);
+        // Insert the new token before draining dirty pairs: the freshly created
+        // neighbor pairs reference new_token_id, and push_pair needs its bytes.
         assert_eq!(
             token_dict.insert(new_token_id, new_token),
             None,
             "should never be replacing a token id"
         );
 
-        debug_assert!(
-            merge_list
-                .iter()
-                .filter(|x| x.0 == token_dict[&biggest_pair.0]
-                    && x.1 == token_dict[&biggest_pair.1])
-                .count()
-                == 1,
-            "should never have dupes in merge list"
-        );
+        shard.merge_pair(biggest_pair, new_token_id);
+
+        // Only the pairs this merge actually touched need re-pushing.
+        for (pair, count) in shard.drain_dirty() {
+            push_pair(&mut heap, pair, count, &token_dict);
+        }
 
         if let Some(ref pi) = progress_info {
             pi.tokenizer_merges_done.fetch_add(1, Relaxed);
@@ -167,29 +172,68 @@ pub fn train_tokenizer(
     Ok((token_dict, merge_list))
 }
 
-fn most_frequent_token(
+/// An entry in the merge-selection max-heap. The byte `key` is snapshotted at
+/// push time so ordering is self-contained and never reaches back into
+/// token_dict — safe because a token id's bytes are immutable once assigned.
+/// Ordering matches the reference: by count, then lexicographically by the
+/// (first-token-bytes, second-token-bytes) tuple.
+#[derive(PartialEq, Eq)]
+struct HeapEntry {
+    count: i64,
+    key: (Vec<u8>, Vec<u8>),
+    pair: (u32, u32),
+}
+
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.count
+            .cmp(&other.count)
+            .then_with(|| self.key.cmp(&other.key))
+    }
+}
+
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Push a pair's current count onto the heap, snapshotting its byte key.
+/// Non-positive counts are never merge candidates, so they're skipped.
+fn push_pair(
+    heap: &mut BinaryHeap<HeapEntry>,
+    pair: (u32, u32),
+    count: i64,
     token_dict: &HashMap<u32, Vec<u8>>,
-    shard: &SequenceShard<RealStatsCollector>,
-) -> (u32, u32) {
-    let counts = shard.counts();
-    let biggest_pair = counts.par_iter().reduce(
-        || &CountInfo {
-            token_pair: (0, 0),
-            count: 0,
-        },
-        |s1, s2| match s1.compare_to(s2, token_dict) {
-            Greater => s1,
-            Less => s2,
-            _ => panic!("Unexpected result from comparing CountInfos"),
-        },
-    );
-    biggest_pair.token_pair
+) {
+    if count <= 0 {
+        return;
+    }
+    heap.push(HeapEntry {
+        count,
+        key: (token_dict[&pair.0].clone(), token_dict[&pair.1].clone()),
+        pair,
+    });
+}
+
+/// Pop the highest-priority pair whose snapshot still matches the authoritative
+/// total (lazy deletion of stale entries). Returns None when the heap holds no
+/// current, positive-count pair.
+fn pop_max(heap: &mut BinaryHeap<HeapEntry>, shard: &SequenceShard) -> Option<(u32, u32)> {
+    while let Some(top) = heap.pop() {
+        if top.count > 0 && top.count == shard.pair_total(top.pair) {
+            return Some(top.pair);
+        }
+        // Stale: the pair's count changed (or dropped to 0) since this entry was
+        // pushed. A fresher entry is already in the heap. Discard and continue.
+    }
+    None
 }
 
 #[tracing::instrument(skip(chunks))]
 fn generate_sequence_shards_with_stats(
     chunks: SequenceBuilder,
-) -> SequenceShard<RealStatsCollector> {
+) -> SequenceShard {
     info!(
         "Generating pair sequences from {} unique sequences from corpus",
         chunks.counts().len()
@@ -198,7 +242,7 @@ fn generate_sequence_shards_with_stats(
     let mut count = 0;
 
     // For now, one sequence chunk
-    let mut shard = SequenceShard::new(RealStatsCollector::default());
+    let mut shard = SequenceShard::new();
     for (k, v) in chunks.counts() {
         let tokens: Vec<u32> = k.iter().copied().map(u32::from).collect();
         shard.push(

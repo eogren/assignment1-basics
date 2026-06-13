@@ -5,7 +5,7 @@ use fancy_regex::Regex;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
-use crate::sequence::{RealStatsCollector, SequenceShard, StatsCollector};
+use crate::sequence::SequenceShard;
 
 static GPT2_REGEX: OnceLock<Regex> = OnceLock::new();
 
@@ -36,7 +36,7 @@ pub(crate) fn pretokenize_chunk_for_encoding(
     special_tokens: &[(&str, u32)],
     // reverse_vocab is a slice [0-255] that indexes a byte into its token.
     reverse_vocab: &[Option<u32>],
-) -> SequenceShard<RealStatsCollector> {
+) -> SequenceShard {
     let token_strs = special_tokens.iter().map(|i| i.0).collect_vec();
     let split_re = split_regex(&token_strs);
     let chunk_str = std::str::from_utf8(chunk).expect("expect always utf8");
@@ -44,7 +44,7 @@ pub(crate) fn pretokenize_chunk_for_encoding(
     let splits = split_re.find_iter(chunk_str);
 
     let mut last_idx = 0;
-    let mut ret = SequenceShard::new(RealStatsCollector::default());
+    let mut ret = SequenceShard::new();
     for split in splits.into_iter() {
         let tok_match = split.expect("no error expected in regex");
         let token_str = &chunk_str[tok_match.range()];
@@ -72,13 +72,11 @@ pub(crate) fn pretokenize_chunk_for_encoding(
     ret
 }
 
-fn preokenize_slice_for_encoding<S>(
-    ret: &mut SequenceShard<S>,
+fn preokenize_slice_for_encoding(
+    ret: &mut SequenceShard,
     pre_tok_str: &str,
     reverse_vocab: &[Option<u32>],
-) where
-    S: StatsCollector,
-{
+) {
     let gpt_reg = gpt_regex();
     let tokens = gpt_reg.find_iter(pre_tok_str);
     for token in tokens {
