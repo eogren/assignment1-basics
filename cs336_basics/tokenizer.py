@@ -172,4 +172,4 @@ class Tokenizer:
         for token in ids:
             ret.extend(self._vocab[token])
 
-        return ret.decode("utf-8")
+        return ret.decode("utf-8", errors="replace")
