@@ -1,12 +1,15 @@
 import argparse
 import logging
+import pathlib
 import threading
 import time
+from queue import Queue
 
+from tqdm import tqdm
+
+import wandb
 from cs336_basics import bpe_token
 from cs336_basics.tokenizer import serialize_merges, serialize_vocab
-from tqdm import tqdm
-from queue import Queue
 
 
 def arg_parser() -> argparse.ArgumentParser:
@@ -41,13 +44,33 @@ def main():
     level = logging.DEBUG if parsed.verbose else logging.INFO
     logging.basicConfig(level=level)
 
+    corpus_path = pathlib.Path(parsed.corpus)
+    if not corpus_path.exists():
+        raise ValueError(f"{parsed.corpus} does not exist")
+
     queue = Queue(maxsize=1)
+    special_tokens = ["<|endoftext|>"]
+
+    run = wandb.init(
+        # Set the wandb entity where your project will be logged (generally your team name).
+        entity="eogren-org",
+        # Set the wandb project where this run will be logged.
+        project="CS336",
+        config={
+            "corpus": parsed.corpus,
+            "special_tokens": special_tokens,
+            "vocab_size": parsed.vocab_size,
+        },
+        name=f"{corpus_path.name}-{parsed.vocab_size}",
+        job_type="train_tokenizer",
+        tags=[corpus_path.name],
+    )
 
     handler = bpe_token.ProgressHandler()
     t = threading.Thread(
         name="training",
         target=run_tokenize,
-        args=(queue, parsed.corpus, parsed.vocab_size, ["<|endoftext|>"], handler),
+        args=(queue, parsed.corpus, parsed.vocab_size, special_tokens, handler),
         daemon=True,
     )
     t.start()
@@ -102,4 +125,22 @@ def main():
     with open(parsed.merge_file, "w") as m:
         serialize_merges(m, merges)
 
-    print("Done! Serialized vocab to {} and merges to {}", parsed.vocab_file, parsed.merge_file)
+    largest_token_bytes = 0
+    largest_token_string = ""
+
+    for v in vocab.values():
+        if len(v) > largest_token_bytes:
+            largest_token_bytes = len(v)
+
+        decoded = v.decode("utf-8", errors="replace")
+        if len(decoded) > len(largest_token_string):
+            largest_token_string = decoded
+
+    artifact = wandb.Artifact(name="tokenizer", type="tokenizer")
+    artifact.add_file(local_path=parsed.vocab_file, name="vocab")
+    artifact.add_file(local_path=parsed.merge_file, name="merges")
+    run.log_artifact(artifact)
+    run.summary["largest_token_bytes"] = largest_token_bytes
+    run.summary["largest_token_string"] = largest_token_string
+    run.finish()
+    print(f"Done! Serialized vocab to {parsed.vocab_file} and merges to {parsed.merge_file}")
