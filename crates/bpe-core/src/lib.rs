@@ -340,8 +340,6 @@ fn starting_token_dict(tokens: &Vec<String>) -> HashMap<u32, Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use itertools::rev;
-
     use super::*;
 
     const SEP: &[u8] = b" ";
