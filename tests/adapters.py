@@ -23,6 +23,7 @@ from cs336_basics import (
     bpe_token,
 )
 from cs336_basics.loss import cross_entropy_loss
+from cs336_basics.optimizers import AdamW
 from cs336_basics.transformer import TransformerLM
 
 
@@ -526,7 +527,7 @@ def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
