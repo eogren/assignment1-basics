@@ -85,6 +85,5 @@ class TransformerLM(nn.Module):
 
         intermediate = self.ln_final(intermediate)
         intermediate = self.lm_head(intermediate)
-        # intermediate = softmax(intermediate, dim=-1)
 
         return intermediate
