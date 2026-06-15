@@ -8,10 +8,10 @@ from jaxtyping import Bool, Float
 
 def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     """Write a function to apply the softmax operation on a tensor. Your function should
-    take two parameters: a tensor and a dimension 𝑖, and apply softmax to the 𝑖-th dimension of the
-    input tensor. The output tensor should have the same shape as the input tensor, but its 𝑖-th
+    take two parameters: a tensor and a dimension i, and apply softmax to the i-th dimension of the
+    input tensor. The output tensor should have the same shape as the input tensor, but its i-th
     dimension will now have a normalized probability distribution. Use the trick of subtracting the
-    maximum value in the 𝑖-th dimension from all elements of the 𝑖-th dimension to avoid numerical
+    maximum value in the i-th dimension from all elements of the i-th dimension to avoid numerical
     stability issues."""
     # Get max values across dim and subtract everything from it
     max_values = torch.max(x, dim=dim, keepdim=True).values

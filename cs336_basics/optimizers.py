@@ -70,7 +70,7 @@ class SGD(torch.optim.Optimizer):
 if __name__ == "__main__":
     weights = torch.nn.Parameter(5 * torch.randn((10, 10)))
     opt = SGD([weights], lr=1e3)
-    for t in range(100):
+    for _t in range(100):
         opt.zero_grad()  # Reset the gradients for all learnable parameters.
         loss = (weights**2).mean()  # Compute a scalar loss value.
         print(loss.cpu().item())
