@@ -1,3 +1,5 @@
+import math
+
 import einops
 import torch
 from jaxtyping import Bool, Float
@@ -40,3 +42,16 @@ def scaled_dot_product_attention(
     post_softmax: Float[torch.Tensor, " ... queries keys"] = softmax(pre_softmax, -1)
 
     return einops.einsum(post_softmax, V, "... queries keys, ... keys d_v -> ... queries d_v")
+
+
+def cosine_lr_schedule(
+    it: int, max_learning_rate: float, min_learning_rate: float, warmup_iters: int, cosine_cycle_iters: int
+) -> float:
+    if it < warmup_iters:
+        return (float(it) / float(warmup_iters)) * max_learning_rate
+    elif it > cosine_cycle_iters:
+        return min_learning_rate
+    else:
+        lr_delta = max_learning_rate - min_learning_rate
+        cos_term = math.pi * float(it - warmup_iters) / float(cosine_cycle_iters - warmup_iters)
+        return min_learning_rate + 0.5 * (1 + math.cos(cos_term)) * lr_delta
