@@ -1,4 +1,5 @@
 import math
+from collections.abc import Iterable
 
 import einops
 import torch
@@ -55,3 +56,14 @@ def cosine_lr_schedule(
         lr_delta = max_learning_rate - min_learning_rate
         cos_term = math.pi * float(it - warmup_iters) / float(cosine_cycle_iters - warmup_iters)
         return min_learning_rate + 0.5 * (1 + math.cos(cos_term)) * lr_delta
+
+
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+    sums = [torch.sum(torch.pow(param.grad.data, 2)) for param in parameters if param.grad is not None]
+    norm = torch.sqrt(torch.sum(torch.stack(sums))).item()
+
+    if norm >= max_l2_norm:
+        scale_constant = max_l2_norm / (norm + 10**-6)
+        for param in parameters:
+            if param.grad is not None:
+                param.grad.data *= scale_constant
