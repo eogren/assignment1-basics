@@ -22,3 +22,7 @@ class Linear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the linear transformation to the input."""
         return torch.einsum("o i, ... i -> ... o", self.weight, x)
+
+    def extra_repr(self) -> str:
+        shape = self.weight.shape
+        return f"in_features={shape[1]}, out_features={shape[0]}"

@@ -18,6 +18,10 @@ class Embedding(nn.Module):
         """Take token_ids of shape (batch_size, sequence_length)"""
         return self.weight[token_ids]
 
+    def extra_repr(self) -> str:
+        shape = self.weight.shape
+        return f"vocab_size={shape[0]}, embedding_dim={shape[1]}"
+
 
 class RoPE(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None):
@@ -28,8 +32,8 @@ class RoPE(nn.Module):
         device: torch.device | None = None  Device to store the parameters on"""
         super().__init__()
 
-        i = torch.arange(max_seq_len).reshape(max_seq_len, 1)
-        k = (2 * torch.arange(start=1, end=1 + (d_k // 2)) - 2) / d_k
+        i = torch.arange(max_seq_len, device=device).reshape(max_seq_len, 1)
+        k = (2 * torch.arange(start=1, end=1 + (d_k // 2), device=device) - 2) / d_k
         theta_scalar = torch.tensor(theta, device=device, dtype=torch.float32)
         theta_tensor = torch.pow(theta_scalar, k)
         thetas = i / theta_tensor
@@ -37,6 +41,8 @@ class RoPE(nn.Module):
         sines = torch.sin(thetas)
         cosines = torch.cos(thetas)
 
+        self.theta = theta
+        self.max_seq_len = max_seq_len
         self.register_buffer("sines", sines, persistent=False)
         self.register_buffer("cosines", cosines, persistent=False)
 
@@ -52,3 +58,6 @@ class RoPE(nn.Module):
         out[..., 1::2] = x_rot_odd
 
         return out
+
+    def extra_repr(self) -> str:
+        return f"theta={self.theta}, max_seq_len={self.max_seq_len}"
