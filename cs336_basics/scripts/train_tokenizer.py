@@ -5,9 +5,9 @@ import threading
 import time
 from queue import Queue
 
+import wandb
 from tqdm import tqdm
 
-import wandb
 from cs336_basics import bpe_token
 from cs336_basics.tokenizer import serialize_merges, serialize_vocab
 

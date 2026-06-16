@@ -67,28 +67,52 @@ impl ProgressHandler {
     }
 }
 
-#[pyfunction]
-fn encode_str(
-    s: &str,
-    vocab: HashMap<u32, Vec<u8>>,
+#[pyclass]
+struct Encoder {
+    reverse_vocab: [Option<u32>; 256],
     merges: Vec<(u32, u32, u32)>,
     special_tokens: Vec<(String, u32)>,
-) -> PyResult<Vec<u32>> {
-    let mut reverse_vocab: [Option<u32>; 256] = [None; 256];
-    for items in vocab.iter() {
-        if items.1.len() == 1 {
-            reverse_vocab[*items.1.first().unwrap() as usize] = Some(*items.0);
+}
+
+#[pymethods]
+impl Encoder {
+    #[new]
+    fn new(
+        vocab: HashMap<u32, Vec<u8>>,
+        merges: Vec<(u32, u32, u32)>,
+        special_tokens: Vec<(String, u32)>,
+    ) -> Self {
+        let mut reverse_vocab: [Option<u32>; 256] = [None; 256];
+        for items in vocab.iter() {
+            if items.1.len() == 1 {
+                reverse_vocab[*items.1.first().unwrap() as usize] = Some(*items.0);
+            }
+        }
+
+        Self {
+            reverse_vocab,
+            merges,
+            special_tokens,
         }
     }
 
-    let special_token_ptrs = special_tokens.iter().map(|i| (i.0.as_str(), i.1)).collect();
+    fn encode_str(&self, s: &str) -> PyResult<Vec<u32>> {
+        self.encode_bytes(s.as_bytes())
+    }
 
-    Ok(encode(
-        s.as_bytes(),
-        &merges,
-        special_token_ptrs,
-        &reverse_vocab,
-    ))
+    fn encode_bytes(&self, b: &[u8]) -> PyResult<Vec<u32>> {
+        let special_token_ptrs = self
+            .special_tokens
+            .iter()
+            .map(|i| (i.0.as_str(), i.1))
+            .collect();
+        Ok(encode(
+            b,
+            &self.merges,
+            special_token_ptrs,
+            &self.reverse_vocab,
+        ))
+    }
 }
 
 #[pyfunction]
@@ -126,8 +150,8 @@ fn tokenize(
 #[pymodule]
 fn bpe_token(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
-    m.add_function(wrap_pyfunction!(encode_str, m)?)?;
     m.add_class::<Progress>()?;
     m.add_class::<ProgressHandler>()?;
+    m.add_class::<Encoder>()?;
     Ok(())
 }

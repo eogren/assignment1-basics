@@ -20,7 +20,7 @@ fn split_regex(special_tokens: &[&str]) -> Regex {
     // Put the longest tokens first so rust's engine will match them. (eg if aa and a are both special tokens,
     // we want to match aa when possible)
     let mut indices: Vec<usize> = (0..special_tokens.len()).collect();
-    indices.sort_by(|&a, &b| special_tokens[b].cmp(&special_tokens[a]));
+    indices.sort_by(|&a, &b| special_tokens[b].cmp(special_tokens[a]));
 
     let re = itertools::join(
         indices

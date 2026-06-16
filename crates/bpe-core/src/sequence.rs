@@ -3,7 +3,6 @@ use std::num::NonZeroU32;
 #[cfg(test)]
 use std::collections::HashMap;
 
-use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Debug, Default)]
@@ -72,6 +71,8 @@ impl RealStatsCollector {
 
         let counts_unwrapped = counts.unwrap();
 
+        let mut should_delete = false;
+
         counts_unwrapped
             .entry(sequence_idx)
             .and_modify(|e| {
@@ -79,17 +80,25 @@ impl RealStatsCollector {
                     .checked_add_signed(delta)
                     .expect("never expect underflow here");
                 *e = new_val;
+                if new_val == 0 {
+                    should_delete = true;
+                }
             })
             .or_insert_with(|| u32::try_from(delta).expect("delta should convert here"));
+
+        if should_delete {
+            counts_unwrapped.remove(&sequence_idx);
+        }
     }
 }
 
 impl RealStatsCollector {
-    fn sequences_with_pair(&self, pair: (u32, u32)) -> Vec<usize> {
-        self.count_index
-            .get(&pair)
-            .map(|counts| counts.keys().copied().collect_vec())
-            .unwrap_or_default()
+    fn sequences_with_pair(&mut self, pair: (u32, u32), pair_buf: &mut Vec<usize>) {
+        pair_buf.clear();
+
+        if let Some(it) = self.count_index.get(&pair).map(|counts| counts.keys()) {
+            pair_buf.extend(it);
+        }
     }
 
     /// Current dup-weighted total occurrences of `pair`. Used by the heap's
@@ -158,6 +167,9 @@ pub(crate) struct SequenceShard {
 
     /// stats collector
     stats_collector: RealStatsCollector,
+
+    /// used to avoid constantly initializing new vectors for pairs
+    pair_buf: Vec<usize>,
 }
 
 /// Iterate through pairs in a single sequence
@@ -335,6 +347,7 @@ impl SequenceShard {
             next_token: Vec::new(),
             start_index: Vec::new(),
             stats_collector: RealStatsCollector::default(),
+            pair_buf: Vec::new(),
         }
     }
 
@@ -438,13 +451,13 @@ impl SequenceShard {
         self.stats_collector.drain_dirty()
     }
 
-    #[tracing::instrument(skip(self), fields(pair, new_token))]
     /// Merge all instances of `pair` together, replacing them with new_token
     /// Returns 'true' if any matching pairs exist in this shard.
     pub fn merge_pair(&mut self, pair: (u32, u32), new_token: u32) -> bool {
-        let sequences_with_pair = self.stats_collector.sequences_with_pair(pair);
+        self.stats_collector
+            .sequences_with_pair(pair, &mut self.pair_buf);
         let mut merged = false;
-        for sequence_index in sequences_with_pair {
+        while let Some(sequence_index) = self.pair_buf.pop() {
             let mut c = self.cursor_mut(sequence_index);
             while !c.is_done() {
                 let c_pair = c.current_pair().expect("current_pair should be valid");

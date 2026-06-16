@@ -130,6 +130,7 @@ class Tokenizer:
     _merges: list[tuple[bytes, bytes]]
     _token_merges: list[tuple[int, int, int]]
     _special_tokens: list[tuple[str, int]]
+    _encoder: bpe_token.Encoder | None
 
     def __init__(
         self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
@@ -145,9 +146,12 @@ class Tokenizer:
         reverse_vocab = {v: k for k, v in vocab.items()}
         self._token_merges = _convert_merges_to_tokens(reverse_vocab, merges)
         self._special_tokens = [(token, reverse_vocab[token.encode("utf-8")]) for token in special_tokens]
+        self._encoder = None
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+    def from_files(
+        cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None
+    ) -> Tokenizer:
         vocab = None
         merges = None
 
@@ -157,12 +161,20 @@ class Tokenizer:
         with open(merges_filepath) as f:
             merges = deserialize_merge(f)
 
-        Tokenizer(vocab, merges, special_tokens)
+        return Tokenizer(vocab, merges, special_tokens)
 
-    def encode(self, text: str) -> list[int]:
-        return bpe_token.encode_str(text, self._vocab, self._token_merges, self._special_tokens)
+    def encode(self, text: str | bytes) -> list[int]:
+        if self._encoder is None:
+            self._encoder = bpe_token.Encoder(self._vocab, self._token_merges, self._special_tokens)
 
-    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        if isinstance(text, str):
+            return self._encoder.encode_str(text)
+        elif isinstance(text, bytes):
+            return self._encoder.encode_bytes(text)
+        else:
+            raise ValueError(f"Unknown type for text {type(text)}")
+
+    def encode_iterable(self, iterable: Iterable[str] | Iterable[bytes]) -> Iterator[int]:
         for s in iterable:
             ret = self.encode(s)
             yield from ret

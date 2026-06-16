@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 gpt2_flops = "cs336_basics.scripts.gpt2_flops:main"
+tokenize_dataset = "cs336_basics.scripts.tokenize_dataset:main"
 train_tokenizer = "cs336_basics.scripts.train_tokenizer:main"
 
 [build-system]
