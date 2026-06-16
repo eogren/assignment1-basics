@@ -3,6 +3,7 @@ import itertools
 import logging
 import mmap
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,10 @@ def chunked_file(path: str | Path, special_tokens: str, pbar, ideal_chunk: int =
             idx = end
 
 
+def process_chunk(b: bytes, tokenizer: Tokenizer) -> list[int]:
+    return tokenizer.encode(b)
+
+
 def main():
     parsed = arg_parser().parse_args()
     level = logging.DEBUG if parsed.verbose else logging.INFO
@@ -61,7 +66,11 @@ def main():
     with open(parsed.output_file, "b+w") as output:
         input = Path(parsed.corpus)
         input_size = input.stat().st_size
-        with tqdm(total=input_size, unit="B", unit_scale=True) as pbar:
-            chunked = chunked_file(input, special_tokens[0], pbar)
-            for tokens in itertools.batched(tokenizer.encode_iterable(chunked), n=64000000):
-                np.array(tokens, dtype=np.uint16).tofile(output)
+        with ThreadPoolExecutor(thread_name_prefix="encoder") as tpe:
+            with tqdm(total=input_size, unit="B", unit_scale=True) as pbar:
+                chunked = chunked_file(input, special_tokens[0], pbar)
+                # for tokens in itertools.batched(tpe.map(tokenizer.encode_iterable, chunked), n=64000000):
+                tokens = tpe.map(lambda x: process_chunk(x, tokenizer), chunked, buffersize=25)
+                collapsed_tokens = itertools.chain.from_iterable(tokens)
+                for batch in itertools.batched(collapsed_tokens, n=64000000, strict=False):
+                    np.array(batch, dtype=np.uint16).tofile(output)

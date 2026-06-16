@@ -69,9 +69,9 @@ impl ProgressHandler {
 
 #[pyclass]
 struct Encoder {
-    reverse_vocab: [Option<u32>; 256],
-    merges: Vec<(u32, u32, u32)>,
-    special_tokens: Vec<(String, u32)>,
+    reverse_vocab: Arc<[Option<u32>; 256]>,
+    merges: Arc<Vec<(u32, u32, u32)>>,
+    special_tokens: Arc<Vec<(String, u32)>>,
 }
 
 #[pymethods]
@@ -90,28 +90,30 @@ impl Encoder {
         }
 
         Self {
-            reverse_vocab,
-            merges,
-            special_tokens,
+            reverse_vocab: Arc::new(reverse_vocab),
+            merges: Arc::new(merges),
+            special_tokens: Arc::new(special_tokens),
         }
     }
 
-    fn encode_str(&self, s: &str) -> PyResult<Vec<u32>> {
-        self.encode_bytes(s.as_bytes())
+    fn encode_str(&self, py: Python<'_>, s: &str) -> PyResult<Vec<u32>> {
+        self.encode_bytes(py, s.as_bytes())
     }
 
-    fn encode_bytes(&self, b: &[u8]) -> PyResult<Vec<u32>> {
-        let special_token_ptrs = self
-            .special_tokens
-            .iter()
-            .map(|i| (i.0.as_str(), i.1))
-            .collect();
-        Ok(encode(
-            b,
-            &self.merges,
-            special_token_ptrs,
-            &self.reverse_vocab,
-        ))
+    fn encode_bytes(&self, py: Python<'_>, b: &[u8]) -> PyResult<Vec<u32>> {
+        let my_tokens = self.special_tokens.clone();
+        let my_merges = self.merges.clone();
+        let my_vocab = self.reverse_vocab.clone();
+
+        py.detach(move || {
+            let special_token_ptrs = my_tokens.iter().map(|i| (i.0.as_str(), i.1)).collect();
+            Ok(encode(
+                b,
+                &my_merges,
+                special_token_ptrs,
+                my_vocab.as_slice(),
+            ))
+        })
     }
 }
 
