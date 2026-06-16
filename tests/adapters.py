@@ -23,6 +23,7 @@ from cs336_basics import (
     bpe_token,
 )
 from cs336_basics.funcs import cosine_lr_schedule, gradient_clipping
+from cs336_basics.loaders import get_batch
 from cs336_basics.loss import cross_entropy_loss
 from cs336_basics.optimizers import AdamW
 from cs336_basics.transformer import TransformerLM
@@ -475,7 +476,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
