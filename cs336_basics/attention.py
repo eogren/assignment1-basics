@@ -37,6 +37,7 @@ class MultiheadSelfAttention(nn.Module):
 
         self.num_heads = num_heads
         self.d_k = d_k
+        self.device = device
 
         self.q_proj = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
         self.k_proj = Linear(out_features=num_heads * d_k, in_features=d_model, device=device, dtype=dtype)
@@ -81,7 +82,7 @@ class MultiheadSelfAttention(nn.Module):
             proj_k = self.rope(proj_k, token_positions)
 
         # Generate mask - should be seq_len by seq_len
-        mask = _triangle_mask(seq_len)
+        mask = _triangle_mask(seq_len, device=self.device)
 
         # Them multihead
         multihead = scaled_dot_product_attention(proj_q, proj_k, proj_v, mask)

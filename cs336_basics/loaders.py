@@ -4,7 +4,11 @@ import torch
 
 
 def get_batch(
-    dataset: npt.NDArray, batch_size: int, context_length: int, device: str, rng: np.random.Generator | None = None
+    dataset: npt.NDArray,
+    batch_size: int,
+    context_length: int,
+    device: str | torch.device | None = None,
+    rng: np.random.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Given a dataset (a 1D numpy array of integers) and a desired batch size and
