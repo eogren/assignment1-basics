@@ -31,8 +31,9 @@ def load_checkpoint(
     src: str | os.PathLike | BinaryIO | IO[bytes],
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer | None,
+    device_override: torch.device | None = None,
 ) -> int:
-    state = torch.load(src)
+    state = torch.load(src, map_location=device_override)
     model.load_state_dict(state["model"])
     if optimizer is not None:
         optimizer.load_state_dict(state["optimizer"])

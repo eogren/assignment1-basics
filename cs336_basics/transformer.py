@@ -38,6 +38,7 @@ class TransformerLM(nn.Module):
     token_embeddings: Embedding
     ln_final: RMSNorm
     lm_head: Linear
+    _device: torch.device | None
 
     def __init__(
         self,
@@ -74,6 +75,8 @@ class TransformerLM(nn.Module):
 
         self.ln_final = RMSNorm(d_model=d_model, device=device, dtype=dtype)
         self.lm_head = Linear(in_features=d_model, out_features=vocab_size, device=device, dtype=dtype)
+        self._context_len = max_seq_len
+        self._device = device
 
     def forward(
         self,
@@ -87,3 +90,11 @@ class TransformerLM(nn.Module):
         intermediate = self.lm_head(intermediate)
 
         return intermediate
+
+    @property
+    def context_length(self) -> int:
+        return self._context_len
+
+    @property
+    def device(self) -> torch.device | None:
+        return self._device

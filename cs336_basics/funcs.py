@@ -67,3 +67,14 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
         for param in parameters:
             if param.grad is not None:
                 param.grad.data *= scale_constant
+
+
+def pick_best_device() -> torch.device:
+    """Pick best device for training - GPUs if available."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+
+    if torch.mps.is_available():
+        return torch.device("mps")
+
+    return torch.device("cpu")

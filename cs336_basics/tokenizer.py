@@ -185,3 +185,12 @@ class Tokenizer:
             ret.extend(self._vocab[token])
 
         return ret.decode("utf-8", errors="replace")
+
+    def get_token_id(self, b: bytes) -> int | None:
+        """Get the token ID corresponding with the byte array. Returns None
+        if the bytes don't exist in our vocab."""
+        for k, v in self._vocab.items():
+            if v == b:
+                return k
+
+        return None

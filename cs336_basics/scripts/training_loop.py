@@ -17,22 +17,11 @@ import torch.optim
 
 import wandb
 from cs336_basics.checkpoints import load_checkpoint, save_checkpoint
-from cs336_basics.funcs import cosine_lr_schedule, gradient_clipping
+from cs336_basics.funcs import cosine_lr_schedule, gradient_clipping, pick_best_device
 from cs336_basics.loaders import get_batch, get_eval_batch
 from cs336_basics.loss import cross_entropy_loss
 from cs336_basics.optimizers import AdamW
 from cs336_basics.transformer import TransformerLM
-
-
-def pick_best_device() -> torch.device:
-    """Pick best device for training - GPUs if available."""
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    if torch.mps.is_available():
-        return torch.device("mps")
-
-    return torch.device("cpu")
 
 
 class HyperParameters:
