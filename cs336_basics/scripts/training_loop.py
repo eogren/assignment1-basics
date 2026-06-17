@@ -1,16 +1,24 @@
+import argparse
+import hashlib
+import json
 import math
 import random
+from argparse import ArgumentParser, BooleanOptionalAction
+from dataclasses import dataclass
 from os import PathLike
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import torch
 import torch.nn as nn
 import torch.optim
 
 import wandb
+from cs336_basics.checkpoints import load_checkpoint, save_checkpoint
 from cs336_basics.funcs import cosine_lr_schedule, gradient_clipping
-from cs336_basics.loaders import get_batch
+from cs336_basics.loaders import get_batch, get_eval_batch
 from cs336_basics.loss import cross_entropy_loss
 from cs336_basics.optimizers import AdamW
 from cs336_basics.transformer import TransformerLM
@@ -112,6 +120,16 @@ class HyperParameters:
 
         return props
 
+    def hash(self) -> str:
+        params_to_ignore = ["device"]
+        params = vars(self).copy()
+        params["dtype"] = str(params["dtype"])
+        for ignore in params_to_ignore:
+            del params[ignore]
+
+        params_str = json.dumps(params, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(params_str).hexdigest()[:12]
+
 
 def build_model(parameters: HyperParameters) -> TransformerLM:
     return TransformerLM(
@@ -137,7 +155,33 @@ def build_optimizer(parameters: HyperParameters, model: nn.Module) -> torch.opti
     )
 
 
-def train(input_path: str | PathLike, validation_path: str | PathLike, parameters: HyperParameters):
+def validate(
+    validation_arr: npt.NDArray, model: TransformerLM, parameters: HyperParameters, batch_size_multiplier: int = 8
+) -> float:
+    """Validate the model against the validation data and return the average cross entropy loss."""
+    running_loss: float = 0.0
+    tokens: float = 0
+
+    with torch.no_grad():
+        for train, test in get_eval_batch(
+            validation_arr, parameters.batch_size * batch_size_multiplier, parameters.context_length, parameters.device
+        ):
+            predictions = model(train)
+            loss = cross_entropy_loss(predictions, test, reduction="sum")
+            running_loss += loss.item()
+            tokens += train.numel()
+
+    return running_loss / tokens
+
+
+def train(
+    ds_name: str,
+    input_path: str | PathLike,
+    validation_path: str | PathLike,
+    parameters: HyperParameters,
+    checkpoint_info: CheckpointInfo | None = None,
+    resume: bool = False,
+):
     input_arr = np.memmap(input_path, dtype=np.uint16)
     validation_arr = np.memmap(validation_path, dtype=np.uint16)
 
@@ -156,11 +200,33 @@ def train(input_path: str | PathLike, validation_path: str | PathLike, parameter
     wandb_config = parameters.to_dict()
     wandb_config["rng_seed"] = seed
 
+    name = f"{ds_name}-{parameters.hash()}"
+    lowest_loss: float | None = None
+
+    # Resume from the latest checkpoint if requested and present. The run name is
+    # deterministic from hyperparameters, so the same config always maps to the
+    # same checkpoint file and the same wandb run -> idempotent under eviction.
+    start_step = 0
+    if resume and checkpoint_info is not None:
+        ckpt_path = Path(checkpoint_info.save_directory) / f"{name}-latest.pt"
+        if ckpt_path.exists():
+            start_step = load_checkpoint(ckpt_path, model, optimizer) + 1
+            print(f"Resuming {name} from step {start_step}")
+
+    # Deterministic wandb id so an eviction continues the SAME run, not a new one.
+    run_id = hashlib.sha1(name.encode()).hexdigest()[:16]
     with wandb.init(
-        entity="eogren-org", project="CS336", config=wandb_config, job_type="train_llm", tags=["smoke-test"]
+        entity="eogren-org",
+        project="CS336",
+        config=wandb_config,
+        job_type="train_llm",
+        tags=["smoke-test"],
+        name=name,
+        id=run_id,
+        resume="allow",
     ) as run:
         run.watch(model)
-        for step in range(total_steps):
+        for step in range(start_step, total_steps):
             model.train()
 
             (training_data, labels) = get_batch(
@@ -174,6 +240,10 @@ def train(input_path: str | PathLike, validation_path: str | PathLike, parameter
             optimizer.zero_grad()
             predictions = model(training_data)
             loss = cross_entropy_loss(predictions, labels)
+            if not torch.isfinite(loss):
+                run.summary["diverged"] = True
+                run.summary["diverged_step"] = step
+                break
             loss.backward()
             gradient_clipping(model.parameters(), parameters.max_gradient_l2)
             new_lr = cosine_lr_schedule(
@@ -188,15 +258,104 @@ def train(input_path: str | PathLike, validation_path: str | PathLike, parameter
 
             optimizer.step()
 
-            run.log({"train/lr": new_lr, "train/loss": loss.item(), "train/step": step}, step=step)
+            run.log({"train/lr": new_lr, "train/loss": loss.item()}, step=step)
+
+            if step > 0 and step % 200 == 0:
+                validation_loss = validate(validation_arr, model, parameters, 8)
+                run.log({"validation/loss": validation_loss}, step=step)
+
+                if lowest_loss is None or validation_loss < lowest_loss:
+                    lowest_loss = validation_loss
+                    save_best_checkpoint(name, model, step, checkpoint_info)
+
+            if checkpoint_info is not None and (step % checkpoint_info.save_interval == 0 or step == total_steps - 1):
+                save_latest_checkpoint(name, model, optimizer, step, checkpoint_info)
+
+
+def save_latest_checkpoint(
+    name: str, model: TransformerLM, optimizer: torch.optim.Optimizer, step: int, checkpoint_info: CheckpointInfo
+):
+    out = Path(checkpoint_info.save_directory) / f"{name}-latest.pt"
+    save_checkpoint(model, optimizer, step, out)
+
+
+def save_best_checkpoint(name: str, model: TransformerLM, step: int, checkpoint_info: CheckpointInfo | None):
+    if checkpoint_info:
+        out = Path(checkpoint_info.save_directory)
+        save_checkpoint(model, None, step, out / f"{name}-best.pt")
+
+
+def parse_lr(s: Any) -> float:
+    val = float(s)
+    if val <= 0:
+        raise argparse.ArgumentTypeError("LR must be > 0")
+
+    return val
+
+
+def argument_parser() -> ArgumentParser:
+    ret = ArgumentParser()
+    ret.add_argument("-c", "--checkpoint", required=False, help="Directory for checkpoints.")
+    ret.add_argument("-ci", "--checkpoint_interval", required=False, type=int, default=200)
+    ret.add_argument(
+        "--lr",
+        required=False,
+        type=parse_lr,
+        default=0.001,
+        help="Learning rate for the training session",
+    )
+    ret.add_argument("--total-tokens", type=int, default=7000000, help="number of tokens to process")
+    ret.add_argument("--batch-size", type=int, default=64, help="Batch size for training")
+    ret.add_argument("--context-length", type=int, default=256, help="Context length for training")
+    ret.add_argument("--ds-name", default="tinystories", help="Dataset name; used in run/checkpoint naming.")
+    ret.add_argument(
+        "--input",
+        default="tokenized_datasets/tinystories_10k/train.np",
+        help="Path to tokenized uint16 training memmap.",
+    )
+    ret.add_argument(
+        "--valid",
+        default="tokenized_datasets/tinystories_10k/valid.np",
+        help="Path to tokenized uint16 validation memmap.",
+    )
+    ret.add_argument(
+        "--resume",
+        action=BooleanOptionalAction,
+        default=True,
+        help="Resume from {name}-latest.pt if it exists (default: on; use --no-resume to start fresh).",
+    )
+    return ret
 
 
 def main():
-    config = HyperParameters()
-    config.total_tokens_to_process = 2000 * config.batch_size * config.context_length
-    assert config.target_steps == 2000
+    args = argument_parser().parse_args()
+    config = HyperParameters(
+        lr=args.lr,
+        total_tokens_to_process=args.total_tokens,
+        batch_size=args.batch_size,
+        context_length=args.context_length,
+    )
+    checkpoint_info = None
+    if args.checkpoint is not None:
+        checkpoint_info = CheckpointInfo(
+            save_directory=args.checkpoint,
+            save_interval=args.checkpoint_interval,
+        )
 
-    train("tokenized_datasets/tinystories_10k/train.np", "tokenized_datasets/tinystories_10k/valid.np", config)
+    train(
+        args.ds_name,
+        args.input,
+        args.valid,
+        config,
+        checkpoint_info,
+        resume=args.resume,
+    )
+
+
+@dataclass
+class CheckpointInfo:
+    save_directory: str | PathLike
+    save_interval: int
 
 
 if __name__ == "__main__":
