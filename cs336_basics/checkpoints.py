@@ -18,7 +18,9 @@ def save_checkpoint(
     # can never leave a torn checkpoint as the file we'd resume from (also makes
     # the async rclone upload safe -- it only ever sees a complete file).
     if isinstance(out, (str, os.PathLike)):
-        tmp = f"{os.fspath(out)}.tmp"
+        out = os.fspath(out)
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)  # dir may not exist on a fresh checkout/pod
+        tmp = f"{out}.tmp"
         torch.save(to_save, tmp)
         os.replace(tmp, out)  # atomic within the same filesystem
     else:
